@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Slider } from "../../ui/Slider";
-import { SettingContainer } from "../../ui/SettingContainer";
-import { useSettings } from "../../../hooks/useSettings";
+import { Slider } from "../ui/Slider";
+import { SettingContainer } from "../ui/SettingContainer";
+import { useSettings } from "../../hooks/useSettings";
 
 export const MicrophoneVolume: React.FC = () => {
   const { getSetting, updateSetting } = useSettings();

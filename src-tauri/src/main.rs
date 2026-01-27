@@ -2,7 +2,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter};
 
 #[derive(serde::Serialize)]
 struct AudioDevice {
@@ -61,6 +61,7 @@ fn get_output_devices() -> Result<Vec<AudioDevice>, String> {
 }
 
 #[tauri::command]
+#[allow(deprecated)]
 fn start_monitoring(
     state: tauri::State<AudioMonitorState>,
     app_handle: tauri::AppHandle,
