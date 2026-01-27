@@ -1,6 +1,6 @@
 import React from "react";
 import { SettingsGroup } from "../../ui/SettingsGroup";
-import { MicrophoneSelector, OutputDeviceSelector } from "../";
+import { MicrophoneSelector, OutputDeviceSelector, MicrophoneVolume } from "../";
 
 export const GeneralSettings: React.FC = () => {
   return (
@@ -17,6 +17,7 @@ export const GeneralSettings: React.FC = () => {
         description="Pick your microphone input and output device."
       >
         <MicrophoneSelector grouped />
+        <MicrophoneVolume />
         <OutputDeviceSelector grouped />
       </SettingsGroup>
     </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-type SettingKey = "selected_microphone" | "selected_output_device";
+type SettingKey = "selected_microphone" | "selected_output_device" | "microphone_volume";
 
 interface AudioDevice {
   id: string;
@@ -11,11 +11,13 @@ interface AudioDevice {
 interface SettingsState {
   selected_microphone: string;
   selected_output_device: string;
+  microphone_volume: string;
 }
 
 const defaultSettings: SettingsState = {
   selected_microphone: "Default",
   selected_output_device: "Default",
+  microphone_volume: "100",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };
