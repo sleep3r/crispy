@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 type SettingKey = "selected_microphone" | "selected_output_device";
 
 interface AudioDevice {
+  id: string;
   name: string;
 }
 
@@ -30,6 +32,9 @@ const updateState = (partial: Partial<SettingsState>) => {
 
 export const useSettings = () => {
   const [settings, setSettings] = useState(settingsState);
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+  const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     const listener = (nextState: SettingsState) => {
@@ -41,23 +46,35 @@ export const useSettings = () => {
     };
   }, []);
 
-  const audioDevices = useMemo<AudioDevice[]>(
-    () => [
-      { name: "Default" },
-      { name: "Built-in Microphone" },
-      { name: "USB Audio Interface" },
-    ],
-    [],
-  );
+  const refreshAudioDevices = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const devices = await invoke<AudioDevice[]>("get_input_devices");
+      setAudioDevices(devices);
+    } catch (error) {
+      console.error("Failed to fetch input devices:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-  const outputDevices = useMemo<AudioDevice[]>(
-    () => [
-      { name: "Default" },
-      { name: "System Output" },
-      { name: "Virtual Cable" },
-    ],
-    [],
-  );
+  const refreshOutputDevices = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const devices = await invoke<AudioDevice[]>("get_output_devices");
+      setOutputDevices(devices);
+    } catch (error) {
+      console.error("Failed to fetch output devices:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Fetch devices on mount
+  useEffect(() => {
+    refreshAudioDevices();
+    refreshOutputDevices();
+  }, [refreshAudioDevices, refreshOutputDevices]);
 
   const getSetting = (key: SettingKey) => settings[key];
 
@@ -77,10 +94,10 @@ export const useSettings = () => {
     updateSetting,
     resetSetting,
     isUpdating,
-    isLoading: false,
+    isLoading,
     audioDevices,
     outputDevices,
-    refreshAudioDevices: () => {},
-    refreshOutputDevices: () => {},
+    refreshAudioDevices,
+    refreshOutputDevices,
   };
 };
