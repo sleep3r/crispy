@@ -32,7 +32,12 @@ export const MicrophoneVolume: React.FC = () => {
       try {
         unlisten = await listen<number>("microphone-level", (event) => {
           const raw = event.payload;
-          const visual = Math.min(Math.sqrt(raw) * 1.5, 1);
+          // macOS-like feel: ignore noise floor + faster peak
+          const noiseFloor = 0.008;
+          const gain = 5.2;
+          const normalized = Math.max(0, raw - noiseFloor) / (1 - noiseFloor);
+          const curved = Math.pow(Math.min(normalized * gain, 1), 0.3);
+          const visual = Math.min(curved, 1);
           lastLevel.current = lastLevel.current * 0.7 + visual * 0.3;
         });
 
