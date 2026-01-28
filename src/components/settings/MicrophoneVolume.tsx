@@ -33,7 +33,7 @@ export const MicrophoneVolume: React.FC = () => {
         unlisten = await listen<number>("microphone-level", (event) => {
           const raw = event.payload;
           // macOS-like feel: ignore noise floor + faster peak
-          const noiseFloor = 0.008;
+          const noiseFloor = 0.01;
           const gain = 5.2;
           const normalized = Math.max(0, raw - noiseFloor) / (1 - noiseFloor);
           const curved = Math.pow(Math.min(normalized * gain, 1), 0.3);
