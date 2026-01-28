@@ -23,10 +23,9 @@ export const OutputDeviceSelector: React.FC<OutputDeviceSelectorProps> =
         refreshOutputDevices,
       } = useSettings();
 
+      const rawSelection = getSetting("selected_output_device");
       const selectedOutputDevice =
-        getSetting("selected_output_device") === "default"
-          ? "Default"
-          : getSetting("selected_output_device") || "Default";
+        rawSelection === "default" ? "Default" : rawSelection || null;
 
       const handleOutputDeviceSelect = async (deviceName: string) => {
         await updateSetting("selected_output_device", deviceName);
@@ -36,10 +35,13 @@ export const OutputDeviceSelector: React.FC<OutputDeviceSelectorProps> =
         await resetSetting("selected_output_device");
       };
 
-      const outputDeviceOptions = outputDevices.map((device) => ({
-        value: device.name,
-        label: device.name,
-      }));
+      const outputDeviceOptions = [
+        { value: "Default", label: "System Default" },
+        ...outputDevices.map((device) => ({
+          value: device.name,
+          label: device.name,
+        })),
+      ];
 
       return (
         <SettingContainer

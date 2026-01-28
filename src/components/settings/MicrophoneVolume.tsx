@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Slider } from "../ui/Slider";
@@ -7,41 +7,43 @@ import { useSettings } from "../../hooks/useSettings";
 
 export const MicrophoneVolume: React.FC = () => {
   const { getSetting, updateSetting } = useSettings();
-  const [level, setLevel] = useState(0);
+
   const selectedMicrophone = getSetting("selected_microphone");
-  // Default to 100% volume
   const volume = parseInt(getSetting("microphone_volume") || "100", 10);
+
   const requestRef = useRef<number>();
   const lastLevel = useRef(0);
+  const barRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
-    const startMonitoring = async () => {
+    if (!selectedMicrophone) {
+      lastLevel.current = 0;
+      if (barRef.current) barRef.current.style.width = "0%";
+      return;
+    }
+
+    const init = async () => {
       try {
-        if (selectedMicrophone) {
-          await invoke("start_monitoring", { deviceName: selectedMicrophone });
-        }
+        unlisten = await listen<number>("microphone-level", (event) => {
+          const raw = event.payload;
+          const visual = Math.min(Math.sqrt(raw) * 1.5, 1);
+          lastLevel.current = lastLevel.current * 0.7 + visual * 0.3;
+        });
+
+        await invoke("start_monitoring", { deviceName: selectedMicrophone });
       } catch (error) {
-        console.error("Failed to start monitoring:", error);
+        console.error("Failed to initialize monitoring:", error);
       }
     };
 
-    const setupListener = async () => {
-      unlisten = await listen<number>("microphone-level", (event) => {
-        // Smooth the level a bit for visual clarity
-        // Amplify the signal for better visualization (RMS is often low)
-        const amplified = Math.min(event.payload * 5, 1); 
-        lastLevel.current = lastLevel.current * 0.8 + amplified * 0.2;
-      });
-    };
+    init();
 
-    startMonitoring();
-    setupListener();
-
-    // Animation loop to update state less frequently than the event stream
     const animate = () => {
-      setLevel(lastLevel.current);
+      // DOM update only; no React state update
+      const pct = Math.min(lastLevel.current * 100, 100);
+      if (barRef.current) barRef.current.style.width = `${pct}%`;
       requestRef.current = requestAnimationFrame(animate);
     };
     requestRef.current = requestAnimationFrame(animate);
@@ -63,18 +65,14 @@ export const MicrophoneVolume: React.FC = () => {
       description="Adjust microphone sensitivity and monitor levels."
     >
       <div className="flex flex-col gap-4">
-        {/* Visualizer Bar */}
-        <div className="w-full h-4 bg-mid-gray/20 rounded-full overflow-hidden relative">
+        <div className="w-full h-4 bg-mid-gray/10 rounded-full overflow-hidden relative border border-mid-gray/20">
           <div
-            className="h-full bg-text transition-all duration-75 ease-out"
-            style={{ 
-              width: `${Math.min(level * 100, 100)}%`,
-              opacity: level > 0.01 ? 1 : 0.5 
-            }}
+            ref={barRef}
+            className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-[width] duration-100 ease-out"
+            style={{ width: "0%" }}
           />
         </div>
 
-        {/* Volume Slider */}
         <div className="flex items-center gap-4">
           <Slider
             value={volume}

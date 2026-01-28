@@ -15,13 +15,23 @@ interface SettingsState {
 }
 
 const defaultSettings: SettingsState = {
-  selected_microphone: "Default",
-  selected_output_device: "Default",
+  selected_microphone: "",
+  selected_output_device: "",
   microphone_volume: "100",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };
 const listeners = new Set<(state: SettingsState) => void>();
+
+// Shared device state
+let cachedAudioDevices: AudioDevice[] = [];
+let cachedOutputDevices: AudioDevice[] = [];
+let didInitDevices = false;
+const deviceListeners = new Set<() => void>();
+
+const notifyDeviceListeners = () => {
+  deviceListeners.forEach((listener) => listener());
+};
 
 const notify = () => {
   listeners.forEach((listener) => listener(settingsState));
@@ -34,8 +44,8 @@ const updateState = (partial: Partial<SettingsState>) => {
 
 export const useSettings = () => {
   const [settings, setSettings] = useState(settingsState);
-  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
-  const [outputDevices, setOutputDevices] = useState<AudioDevice[]>([]);
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>(cachedAudioDevices);
+  const [outputDevices, setOutputDevices] = useState<AudioDevice[]>(cachedOutputDevices);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -48,11 +58,24 @@ export const useSettings = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const deviceListener = () => {
+      setAudioDevices(cachedAudioDevices);
+      setOutputDevices(cachedOutputDevices);
+    };
+    deviceListeners.add(deviceListener);
+    return () => {
+      deviceListeners.delete(deviceListener);
+    };
+  }, []);
+
   const refreshAudioDevices = useCallback(async () => {
     setIsLoading(true);
     try {
       const devices = await invoke<AudioDevice[]>("get_input_devices");
+      cachedAudioDevices = devices;
       setAudioDevices(devices);
+      notifyDeviceListeners();
     } catch (error) {
       console.error("Failed to fetch input devices:", error);
     } finally {
@@ -64,7 +87,9 @@ export const useSettings = () => {
     setIsLoading(true);
     try {
       const devices = await invoke<AudioDevice[]>("get_output_devices");
+      cachedOutputDevices = devices;
       setOutputDevices(devices);
+      notifyDeviceListeners();
     } catch (error) {
       console.error("Failed to fetch output devices:", error);
     } finally {
@@ -72,8 +97,10 @@ export const useSettings = () => {
     }
   }, []);
 
-  // Fetch devices on mount
+  // Fetch devices only once per app session
   useEffect(() => {
+    if (didInitDevices) return;
+    didInitDevices = true;
     refreshAudioDevices();
     refreshOutputDevices();
   }, [refreshAudioDevices, refreshOutputDevices]);

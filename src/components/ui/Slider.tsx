@@ -26,8 +26,9 @@ export const Slider: React.FC<SliderProps> = ({
   const percentage = ((value - min) / (max - min)) * 100;
 
   return (
-    <div className={`relative flex items-center h-6 ${className}`}>
+    <div className={`relative flex items-center ${className}`}>
       <input
+        data-tauri-drag-region="false"
         type="range"
         min={min}
         max={max}
@@ -35,30 +36,11 @@ export const Slider: React.FC<SliderProps> = ({
         value={value}
         onChange={handleChange}
         disabled={disabled}
-        className="w-full h-1 bg-mid-gray/20 rounded-lg appearance-none cursor-pointer focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full h-4 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-mid-gray disabled:opacity-50 disabled:cursor-not-allowed slider-custom"
         style={{
-          background: `linear-gradient(to right, var(--color-text) ${percentage}%, rgba(128, 128, 128, 0.2) ${percentage}%)`,
+          background: `linear-gradient(to right, var(--color-text) 0%, var(--color-text) ${percentage}%, rgba(128, 128, 128, 0.2) ${percentage}%, rgba(128, 128, 128, 0.2) 100%)`,
         }}
       />
-      <style>{`
-        input[type=range]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          height: 16px;
-          width: 16px;
-          border-radius: 50%;
-          background: var(--color-text);
-          cursor: pointer;
-          margin-top: -6px; /* You need to specify a margin in Chrome, but in Firefox and IE it is automatic */
-          box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-        }
-        input[type=range]::-webkit-slider-runnable-track {
-          width: 100%;
-          height: 4px;
-          cursor: pointer;
-          background: transparent;
-          border-radius: 2px;
-        }
-      `}</style>
     </div>
   );
 };

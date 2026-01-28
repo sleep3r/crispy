@@ -8,3 +8,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>,
 );
+
+// Hide loading screen after React mounts
+setTimeout(() => {
+  document.body.classList.add("loaded");
+}, 100);
