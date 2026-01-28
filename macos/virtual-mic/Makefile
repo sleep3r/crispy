@@ -44,6 +44,10 @@ $(BUNDLE_DIR): $(RUST_LIB)
 	@echo "Copying Info.plist..."
 	cp Info.plist $(CONTENTS_DIR)/Info.plist
 	
+	@echo "Signing plugin bundle (ad-hoc)..."
+	@codesign --sign - --force --deep $(BUNDLE_DIR) || \
+		echo "Warning: Failed to sign plugin (may need Developer ID for distribution)"
+	
 	@echo "Plugin bundle created at $(BUNDLE_DIR)"
 	@rm -f src/plugin.o
 
@@ -57,6 +61,9 @@ install: $(BUNDLE_DIR)
 	@sudo mkdir -p /Library/Audio/Plug-Ins/HAL
 	@sudo rm -rf /Library/Audio/Plug-Ins/HAL/$(DRIVER_BUNDLE)
 	@sudo cp -R $(BUNDLE_DIR) /Library/Audio/Plug-Ins/HAL/
+	@echo "Signing installed plugin..."
+	@sudo codesign --sign - --force --deep /Library/Audio/Plug-Ins/HAL/$(DRIVER_BUNDLE) || \
+		echo "Warning: Failed to sign plugin (may need Developer ID for distribution)"
 	@echo "Plugin installed. Restart CoreAudio:"
 	@echo "  sudo launchctl kickstart -k system/com.apple.audio.coreaudiod"
 
