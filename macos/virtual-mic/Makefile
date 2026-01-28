@@ -6,7 +6,7 @@ DRIVER_BUNDLE = $(PLUGIN_NAME).driver
 
 # Directories
 # Build for x86_64 since Rust toolchain is x86_64 (works on Apple Silicon via Rosetta)
-ARCH = x86_64
+ARCH = arm64
 BUILD_DIR = ../../target
 RUST_LIB = $(BUILD_DIR)/release/libcrispy_virtual_mic_core.a
 BUNDLE_DIR = $(BUILD_DIR)/$(DRIVER_BUNDLE)

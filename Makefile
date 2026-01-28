@@ -135,8 +135,11 @@ plugin-uninstall: ## Uninstall the virtual microphone plugin (requires sudo)
 
 plugin-restart: ## Restart CoreAudio daemon (requires sudo)
 	@echo "$(BLUE)Restarting CoreAudio daemon...$(NC)"
-	@sudo launchctl kickstart -k system/com.apple.audio.coreaudiod || echo "$(YELLOW)⚠️  CoreAudio restart may require manual action$(NC)"
-	@echo "$(GREEN)✅ CoreAudio restarted$(NC)"
+	@sudo killall coreaudiod >/dev/null 2>&1 || true
+	@sudo launchctl kickstart -k system/com.apple.audio.coreaudiod || true
+	@echo "$(YELLOW)If the device doesn't appear, restart CoreAudio manually:$(NC)"
+	@echo "  sudo killall coreaudiod"
+	@echo "  (or reboot if SIP blocks launchctl)"
 
 plugin-status: ## Check if virtual microphone plugin is installed
 	@echo "$(BLUE)Checking virtual microphone plugin status...$(NC)"
