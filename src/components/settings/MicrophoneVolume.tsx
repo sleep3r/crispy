@@ -9,18 +9,22 @@ export const MicrophoneVolume: React.FC = () => {
   const { getSetting, updateSetting } = useSettings();
 
   const selectedMicrophone = getSetting("selected_microphone");
-  const volume = parseInt(getSetting("microphone_volume") || "100", 10);
+  const volume = Number.parseInt(getSetting("microphone_volume") || "100", 10);
 
   const requestRef = useRef<number>();
   const lastLevel = useRef(0);
-  const barRef = useRef<HTMLDivElement>(null);
+  const meterRef = useRef<HTMLDivElement>(null);
+  const volumeRef = useRef(volume);
+
+  // Keep latest volume available inside RAF loop
+  volumeRef.current = volume;
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     if (!selectedMicrophone) {
       lastLevel.current = 0;
-      if (barRef.current) barRef.current.style.width = "0%";
+      if (meterRef.current) meterRef.current.style.width = "0%";
       return;
     }
 
@@ -42,8 +46,15 @@ export const MicrophoneVolume: React.FC = () => {
 
     const animate = () => {
       // DOM update only; no React state update
-      const pct = Math.min(lastLevel.current * 100, 100);
-      if (barRef.current) barRef.current.style.width = `${pct}%`;
+      const scaled = lastLevel.current * (volumeRef.current / 100);
+      const pct = Math.min(scaled * 100, 100);
+      if (meterRef.current) {
+        // Smooth interpolation for better visual feedback
+        const currentWidth = Number.parseFloat(meterRef.current.style.width) || 0;
+        const targetWidth = pct;
+        const newWidth = currentWidth + (targetWidth - currentWidth) * 0.3;
+        meterRef.current.style.width = `${newWidth}%`;
+      }
       requestRef.current = requestAnimationFrame(animate);
     };
     requestRef.current = requestAnimationFrame(animate);
@@ -64,15 +75,8 @@ export const MicrophoneVolume: React.FC = () => {
       title="Input Volume"
       description="Adjust microphone sensitivity and monitor levels."
     >
-      <div className="flex flex-col gap-4">
-        <div className="w-full h-4 bg-mid-gray/10 rounded-full overflow-hidden relative border border-mid-gray/20">
-          <div
-            ref={barRef}
-            className="h-full bg-gradient-to-r from-green-500 to-green-600 transition-[width] duration-100 ease-out"
-            style={{ width: "0%" }}
-          />
-        </div>
-
+      <div className="flex flex-col gap-5">
+        {/* Volume slider */}
         <div className="flex items-center gap-4">
           <Slider
             value={volume}
@@ -82,7 +86,32 @@ export const MicrophoneVolume: React.FC = () => {
             onChange={handleVolumeChange}
             className="flex-1"
           />
-          <span className="text-sm font-medium w-8 text-right">{volume}%</span>
+          <span className="text-sm font-medium w-10 text-right tabular-nums">{volume}%</span>
+        </div>
+
+        {/* Input signal level (macOS-style segmented meter) */}
+        <div className="flex flex-col gap-2">
+          <span className="text-sm text-mid-gray">Input signal level</span>
+          <div className="relative w-full h-4 rounded-md border border-mid-gray/10 bg-mid-gray/5 overflow-hidden">
+            {/* Base segments */}
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(90deg, rgba(0,0,0,0.18) 0 6px, transparent 6px 10px)",
+              }}
+            />
+            {/* Active segments */}
+            <div
+              ref={meterRef}
+              className="absolute inset-y-0 left-0"
+              style={{
+                width: "0%",
+                backgroundImage:
+                  "repeating-linear-gradient(90deg, rgba(0,200,80,0.9) 0 6px, transparent 6px 10px)",
+              }}
+            />
+          </div>
         </div>
       </div>
     </SettingContainer>

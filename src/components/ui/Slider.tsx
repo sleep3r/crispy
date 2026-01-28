@@ -27,20 +27,32 @@ export const Slider: React.FC<SliderProps> = ({
 
   return (
     <div className={`relative flex items-center ${className}`}>
-      <input
-        data-tauri-drag-region="false"
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={handleChange}
-        disabled={disabled}
-        className="w-full h-4 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-mid-gray disabled:opacity-50 disabled:cursor-not-allowed slider-custom"
-        style={{
-          background: `linear-gradient(to right, var(--color-text) 0%, var(--color-text) ${percentage}%, rgba(128, 128, 128, 0.2) ${percentage}%, rgba(128, 128, 128, 0.2) 100%)`,
-        }}
-      />
+      <div className="relative w-full h-6">
+        {/* Background track */}
+        <div className="absolute inset-0 h-[4px] bg-mid-gray/20 rounded-full top-1/2 -translate-y-1/2" />
+        
+        {/* Filled track */}
+        <div 
+          className="absolute h-[4px] rounded-full top-1/2 -translate-y-1/2 transition-all duration-75 ease-out pointer-events-none"
+          style={{ 
+            width: `${percentage}%`,
+            backgroundColor: 'var(--color-slider-fill)'
+          }}
+        />
+        
+        {/* Actual input */}
+        <input
+          data-tauri-drag-region="false"
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={handleChange}
+          disabled={disabled}
+          className="relative w-full h-6 bg-transparent appearance-none cursor-pointer focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed slider-custom z-10"
+        />
+      </div>
     </div>
   );
 };

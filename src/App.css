@@ -7,6 +7,7 @@
   --color-logo-stroke: #000000;
   --color-text-stroke: #ffffff;
   --color-mid-gray: #808080;
+  --color-slider-fill: #007aff; /* macOS blue */
 }
 
 :root {
@@ -28,52 +29,98 @@
     --color-background: #000000;
     --color-logo-primary: #ffffff;
     --color-logo-stroke: #ffffff;
+    --color-slider-fill: #0a84ff; /* macOS blue in dark mode */
   }
 }
 
-/* Slider custom styling */
+/* Slider custom styling - macOS-like */
+.slider-custom {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+
+/* Webkit (Chrome, Safari, Edge) */
 .slider-custom::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 9999px;
-  background: var(--color-text);
-  cursor: pointer;
-  border: 2px solid var(--color-background);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  cursor: grab;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transition: all 0.15s ease;
+  margin-top: -8px;
 }
 
 .slider-custom::-webkit-slider-thumb:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.1);
+  transform: scale(1.05);
+}
+
+.slider-custom::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.12);
   transform: scale(1.1);
 }
 
 .slider-custom::-webkit-slider-runnable-track {
   width: 100%;
-  height: 8px;
+  height: 4px;
   cursor: pointer;
   background: transparent;
-  border-radius: 9999px;
+  border-radius: 3px;
 }
 
+/* Firefox */
 .slider-custom::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 9999px;
-  background: var(--color-text);
-  cursor: pointer;
-  border: 2px solid var(--color-background);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  cursor: grab;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  transition: all 0.15s ease;
 }
 
 .slider-custom::-moz-range-thumb:hover {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.1);
+  transform: scale(1.05);
+}
+
+.slider-custom::-moz-range-thumb:active {
+  cursor: grabbing;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.12);
   transform: scale(1.1);
 }
 
 .slider-custom::-moz-range-track {
   width: 100%;
-  height: 8px;
+  height: 4px;
   cursor: pointer;
   background: transparent;
-  border-radius: 9999px;
+  border-radius: 3px;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .slider-custom::-webkit-slider-thumb,
+  .slider-custom::-moz-range-thumb {
+    background: #f5f5f7;
+    box-shadow: 0 1px 3px rgba(255, 255, 255, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+  
+  .slider-custom::-webkit-slider-thumb:hover,
+  .slider-custom::-moz-range-thumb:hover {
+    box-shadow: 0 2px 6px rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  }
+  
+  .slider-custom::-webkit-slider-thumb:active,
+  .slider-custom::-moz-range-thumb:active {
+    box-shadow: 0 3px 8px rgba(255, 255, 255, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.12);
+  }
 }
