@@ -1,6 +1,6 @@
 import React from "react";
 import { SettingsGroup } from "../../ui/SettingsGroup";
-import { MicrophoneSelector, OutputDeviceSelector, MicrophoneVolume } from "../";
+import { MicrophoneSelector, OutputDeviceSelector, MicrophoneVolume, VirtualMicStatus } from "../";
 
 export const GeneralSettings: React.FC = () => {
   return (
@@ -19,6 +19,13 @@ export const GeneralSettings: React.FC = () => {
         <MicrophoneSelector grouped />
         <MicrophoneVolume />
         <OutputDeviceSelector grouped />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Virtual Microphone (macOS)"
+        description="Status of the Crispy virtual microphone output device."
+      >
+        <VirtualMicStatus />
       </SettingsGroup>
     </div>
   );

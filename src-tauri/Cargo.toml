@@ -13,6 +13,8 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cpal = "0.17.1"
+virtual_mic_ipc = { path = "../crates/virtual_mic_ipc" }
+libc = "0.2"
 
 [profile.release]
 lto = true

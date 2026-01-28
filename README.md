@@ -12,51 +12,97 @@ Crispy is a cross-platform desktop application built with Tauri (Rust + React/Ty
 
 ## Current Status
 
-🚧 **Early Development**
+🚧 **Early Development** - Virtual Microphone Implemented!
 
-Crispy is currently in the initial scaffolding phase. The user interface is in place, featuring:
-*   Microphone and Output device selection.
-*   Model selection framework (currently a "Dummy Model").
-*   Tauri + React + TypeScript foundation.
+Crispy now includes a working virtual microphone for macOS that other apps can use as an input device:
+*   ✅ **Virtual Microphone** - CoreAudio AudioServerPlugIn that creates "Crispy Microphone" device
+*   ✅ **Real-time Audio Pipeline** - Captures, resamples, and processes audio with shared-memory IPC
+*   ✅ **Microphone and Output device selection** - Working device enumeration and selection
+*   ✅ **Live audio monitoring** - Real-time level meters and monitoring
+*   🚧 **Noise suppression** - DSP framework in place, awaiting ML model integration
 
 ## Quick Start
 
 ### Prerequisites
 
+*   macOS (for virtual microphone support)
 *   Node.js (for frontend)
 *   Rust (for backend)
+*   Xcode Command Line Tools: `xcode-select --install`
 
 ### Development
 
 1.  **Install dependencies:**
     ```bash
-    npm install
+    make install
+    # or: npm install
     ```
 
-2.  **Run in development mode:**
+2.  **Install virtual microphone plugin (macOS only):**
     ```bash
-    npm run tauri dev
+    make plugin-install
+    ```
+    This creates the "Crispy Microphone" virtual device that other apps can use.
+
+3.  **Run in development mode:**
+    ```bash
+    make dev
+    # or: npm run tauri dev
     ```
 
-3.  **Build for production:**
+4.  **Build for production:**
     ```bash
-    npm run tauri build
+    make build
+    # or: npm run tauri build
     ```
+
+### Using the Virtual Microphone
+
+Once installed, "Crispy Microphone" will appear in:
+- System Settings → Sound → Input
+- Zoom, Discord, OBS, etc. audio input selection
+
+See [VIRTUAL_MIC.md](VIRTUAL_MIC.md) for detailed documentation.
 
 ## Architecture
 
-Crispy is built as a Tauri application combining:
+Crispy is built as a Tauri application with a multi-component audio pipeline:
 
-*   **Frontend**: React + TypeScript with Tailwind CSS (v4) for the UI.
-*   **Backend**: Rust for system integration and audio processing (planned).
+*   **Frontend**: React + TypeScript with Tailwind CSS (v4) for the UI
+*   **Backend**: Rust using CPAL for audio I/O and custom real-time processing
+*   **Virtual Mic Plugin**: CoreAudio AudioServerPlugIn (Rust + C shim) with lock-free shared memory IPC
+*   **Audio Engine**: Capture → Resample → Downmix → Process → Ring Buffer → Virtual Device
+
+```
+Physical Mic → Crispy App → Shared Memory → Virtual Mic Plugin → Zoom/Discord/etc.
+```
 
 ## Roadmap
 
 *   [x] UI Scaffold (Handy-inspired)
 *   [x] Device Selection UI
-*   [ ] Real-time Audio Processing Pipeline
+*   [x] Real-time Audio Processing Pipeline
+*   [x] Virtual Audio Device implementation (macOS)
+*   [x] Shared-memory IPC with lock-free ring buffer
+*   [x] Automatic resampling and format conversion
 *   [ ] Noise Suppression Model Integration
-*   [ ] Virtual Audio Device implementation
+*   [ ] DSP effects (compression, EQ, etc.)
+*   [ ] Windows virtual audio device support
+
+## Documentation
+
+- [VIRTUAL_MIC.md](VIRTUAL_MIC.md) - Complete virtual microphone documentation
+- [Makefile](Makefile) - All available build targets and commands
+
+## Helpful Commands
+
+```bash
+make help              # Show all available commands
+make plugin-install    # Install virtual microphone plugin
+make plugin-status     # Check if plugin is installed
+make plugin-test       # Test with tone generator
+make dev              # Run in development mode
+```
 
 ## License
 
