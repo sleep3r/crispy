@@ -42,7 +42,7 @@ function App() {
       </div>
       
       {/* Fixed footer */}
-      <Footer />
+      <Footer currentSection={currentSection} />
     </div>
   );
 }

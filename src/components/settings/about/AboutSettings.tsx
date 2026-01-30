@@ -2,7 +2,6 @@ import React from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { SettingContainer } from "../../ui/SettingContainer";
-import { RecordingsDirectory } from "../RecordingsDirectory";
 
 const openUrl = async (url: string) => {
   try {
@@ -43,8 +42,6 @@ export const AboutSettings: React.FC = () => {
             Open GitHub
           </button>
         </SettingContainer>
-
-        <RecordingsDirectory grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup title="Acknowledgements">

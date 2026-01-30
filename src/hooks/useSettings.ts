@@ -5,7 +5,8 @@ type SettingKey =
   | "selected_microphone"
   | "selected_output_device"
   | "microphone_volume"
-  | "selected_model";
+  | "selected_model"
+  | "selected_transcription_model";
 
 interface AudioDevice {
   id: string;
@@ -17,6 +18,7 @@ interface SettingsState {
   selected_output_device: string;
   microphone_volume: string;
   selected_model: string;
+  selected_transcription_model: string;
 }
 
 const defaultSettings: SettingsState = {
@@ -24,6 +26,7 @@ const defaultSettings: SettingsState = {
   selected_output_device: "",
   microphone_volume: "100",
   selected_model: "dummy",
+  selected_transcription_model: "none",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };

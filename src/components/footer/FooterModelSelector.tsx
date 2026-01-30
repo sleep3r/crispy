@@ -1,18 +1,33 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useSettings } from "../../hooks/useSettings";
+import type { SidebarSection } from "../Sidebar";
 
-const MODELS = [
+const NOISE_MODELS = [
   { id: "dummy", name: "None", description: "Not applied" },
-  { id: "noisy", name: "Noisy Model", description: "Adds noise to output" },
+  { id: "noisy", name: "Noisy", description: "Adds noise to output" },
 ];
 
-const ModelSelector: React.FC = () => {
+const TRANSCRIPTION_MODELS = [
+  { id: "none", name: "None", description: "Transcription disabled" },
+];
+
+interface FooterModelSelectorProps {
+  currentSection: SidebarSection;
+}
+
+export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
+  currentSection,
+}) => {
   const { getSetting, updateSetting } = useSettings();
-  const selectedModel = getSetting("selected_model") || "dummy";
+  const isNoise = currentSection === "general";
+
+  const models = isNoise ? NOISE_MODELS : TRANSCRIPTION_MODELS;
+  const settingKey = isNoise ? "selected_model" : "selected_transcription_model";
+  const selected = getSetting(settingKey) || (isNoise ? "dummy" : "none");
+  const current = models.find((m) => m.id === selected) ?? models[0];
+
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  const currentModel = MODELS.find((m) => m.id === selectedModel) || MODELS[0];
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -28,12 +43,12 @@ const ModelSelector: React.FC = () => {
   }, []);
 
   const handleSelect = async (value: string) => {
-    await updateSetting("selected_model", value);
+    await updateSetting(settingKey as "selected_model" | "selected_transcription_model", value);
     setIsOpen(false);
   };
 
   const statusColor =
-    selectedModel === "noisy" ? "bg-yellow-400" : "bg-green-500";
+    isNoise && selected === "noisy" ? "bg-yellow-400" : "bg-green-500";
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -44,7 +59,7 @@ const ModelSelector: React.FC = () => {
       >
         <div className={`w-2 h-2 rounded-full ${statusColor}`} />
         <span className="text-xs font-medium max-w-40 truncate">
-          {currentModel.name}
+          {current.name}
         </span>
         <svg
           className={`w-3 h-3 transition-transform ${
@@ -65,13 +80,16 @@ const ModelSelector: React.FC = () => {
 
       {isOpen && (
         <div className="absolute bottom-full left-0 mb-2 w-64 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1 z-50">
-          {MODELS.map((model) => (
+          <div className="px-3 py-1.5 text-xs font-medium text-mid-gray border-b border-mid-gray/20">
+            {isNoise ? "Noise suppression" : "Transcription"}
+          </div>
+          {models.map((model) => (
             <button
               key={model.id}
               type="button"
               onClick={() => handleSelect(model.id)}
               className={`w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors ${
-                selectedModel === model.id ? "bg-logo-primary/10" : ""
+                selected === model.id ? "bg-logo-primary/10" : ""
               }`}
             >
               <div className="text-sm font-medium">{model.name}</div>
@@ -83,5 +101,3 @@ const ModelSelector: React.FC = () => {
     </div>
   );
 };
-
-export default ModelSelector;

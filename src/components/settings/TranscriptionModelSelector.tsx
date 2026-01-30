@@ -1,18 +1,25 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useSettings } from "../../hooks/useSettings";
+import { SettingContainer } from "../ui/SettingContainer";
 
-const MODELS = [
-  { id: "dummy", name: "None", description: "Not applied" },
-  { id: "noisy", name: "Noisy Model", description: "Adds noise to output" },
+const TRANSCRIPTION_MODELS = [
+  {
+    id: "none",
+    name: "None",
+    description: "Transcription disabled",
+  },
+  // Placeholder for future: whisper, etc.
 ];
 
-const ModelSelector: React.FC = () => {
+export const TranscriptionModelSelector: React.FC<{ grouped?: boolean }> = ({
+  grouped = false,
+}) => {
   const { getSetting, updateSetting } = useSettings();
-  const selectedModel = getSetting("selected_model") || "dummy";
+  const selected = getSetting("selected_transcription_model") || "none";
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const currentModel = MODELS.find((m) => m.id === selectedModel) || MODELS[0];
+  const current = TRANSCRIPTION_MODELS.find((m) => m.id === selected) ?? TRANSCRIPTION_MODELS[0];
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -28,26 +35,20 @@ const ModelSelector: React.FC = () => {
   }, []);
 
   const handleSelect = async (value: string) => {
-    await updateSetting("selected_model", value);
+    await updateSetting("selected_transcription_model", value);
     setIsOpen(false);
   };
 
-  const statusColor =
-    selectedModel === "noisy" ? "bg-yellow-400" : "bg-green-500";
-
-  return (
+  const content = (
     <div className="relative" ref={dropdownRef}>
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 bg-mid-gray/5 rounded-md border border-mid-gray/10 hover:bg-mid-gray/10 transition-colors"
+        className="flex items-center gap-2 px-3 py-1.5 w-full rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors text-left"
       >
-        <div className={`w-2 h-2 rounded-full ${statusColor}`} />
-        <span className="text-xs font-medium max-w-40 truncate">
-          {currentModel.name}
-        </span>
+        <span className="text-sm flex-1 truncate">{current.name}</span>
         <svg
-          className={`w-3 h-3 transition-transform ${
+          className={`w-4 h-4 shrink-0 text-mid-gray transition-transform ${
             isOpen ? "rotate-180" : ""
           }`}
           fill="none"
@@ -64,14 +65,14 @@ const ModelSelector: React.FC = () => {
       </button>
 
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-64 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1 z-50">
-          {MODELS.map((model) => (
+        <div className="absolute top-full left-0 right-0 mt-1 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1 z-50">
+          {TRANSCRIPTION_MODELS.map((model) => (
             <button
               key={model.id}
               type="button"
               onClick={() => handleSelect(model.id)}
               className={`w-full px-3 py-2 text-left hover:bg-mid-gray/10 transition-colors ${
-                selectedModel === model.id ? "bg-logo-primary/10" : ""
+                selected === model.id ? "bg-mid-gray/10" : ""
               }`}
             >
               <div className="text-sm font-medium">{model.name}</div>
@@ -82,6 +83,25 @@ const ModelSelector: React.FC = () => {
       )}
     </div>
   );
-};
 
-export default ModelSelector;
+  if (grouped) {
+    return (
+      <SettingContainer
+        title="Transcription model"
+        description="Model used to transcribe recordings. More options coming soon."
+        grouped
+      >
+        {content}
+      </SettingContainer>
+    );
+  }
+
+  return (
+    <SettingContainer
+      title="Transcription model"
+      description="Model used to transcribe recordings. More options coming soon."
+    >
+      {content}
+    </SettingContainer>
+  );
+};

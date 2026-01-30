@@ -1,11 +1,12 @@
 import React from "react";
-import { Mic, Info, History } from "lucide-react";
+import { Mic, Info, History, Settings } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import { GeneralSettings } from "./settings/general/GeneralSettings";
 import { AboutSettings } from "./settings/about/AboutSettings";
 import { RecordingsHistory } from "./settings/recordings/RecordingsHistory";
+import { SettingsPage } from "./settings/SettingsPage";
 
-export type SidebarSection = "general" | "recordings" | "about";
+export type SidebarSection = "general" | "recordings" | "settings" | "about";
 
 interface SectionConfig {
   label: string;
@@ -23,6 +24,11 @@ export const SECTIONS_CONFIG: Record<SidebarSection, SectionConfig> = {
     label: "Recordings",
     icon: History,
     component: RecordingsHistory,
+  },
+  settings: {
+    label: "Settings",
+    icon: Settings,
+    component: SettingsPage,
   },
   about: {
     label: "About",
