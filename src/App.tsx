@@ -10,10 +10,7 @@ function App() {
   const ActiveComponent = SECTIONS_CONFIG[currentSection].component;
 
   return (
-    <div
-      className="h-screen flex flex-col select-none cursor-default bg-background text-text overflow-hidden"
-      data-tauri-drag-region="false"
-    >
+    <div className="h-screen flex flex-col select-none cursor-default bg-background text-text overflow-hidden">
       <Toaster
         theme="system"
         toastOptions={{

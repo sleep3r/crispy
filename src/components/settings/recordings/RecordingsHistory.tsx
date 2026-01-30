@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Trash2 } from "lucide-react";
 import { AudioPlayer } from "../../ui/AudioPlayer";
 
@@ -60,9 +61,13 @@ export const RecordingsHistory: React.FC = () => {
   };
 
   const deleteRecording = async (path: string) => {
-    if (!confirm("Are you sure you want to delete this recording?")) {
-      return;
-    }
+    const confirmed = await ask("Are you sure you want to delete this recording?", {
+      title: "Delete recording",
+      kind: "warning",
+      okLabel: "Delete",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) return;
 
     try {
       await invoke("delete_recording", { path });
@@ -195,6 +200,16 @@ interface RecordingEntryProps {
   onDelete: () => void;
 }
 
+function base64ToBlobUrl(base64: string, mimeType: string): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
 const RecordingEntry: React.FC<RecordingEntryProps> = ({
   recording,
   isActive,
@@ -202,11 +217,33 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   onDelete,
 }) => {
   const [audioUrl, setAudioUrl] = useState<string>("");
+  const objectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const url = convertFileSrc(recording.path);
-    console.log("Recording entry:", { path: recording.path, url });
-    setAudioUrl(url);
+    let cancelled = false;
+
+    invoke<string>("read_recording_file", { path: recording.path })
+      .then((base64) => {
+        if (cancelled) return;
+        if (objectUrlRef.current) {
+          URL.revokeObjectURL(objectUrlRef.current);
+          objectUrlRef.current = null;
+        }
+        const url = base64ToBlobUrl(base64, "audio/wav");
+        objectUrlRef.current = url;
+        setAudioUrl(url);
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("Failed to load recording for playback:", err);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    };
   }, [recording.path]);
 
   return (
@@ -215,11 +252,7 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
         <p className="text-sm font-medium truncate">{recording.name}</p>
         <button
           type="button"
-          data-tauri-drag-region="false"
-          onClick={() => {
-            console.log("Delete button clicked");
-            onDelete();
-          }}
+          onClick={onDelete}
           className="p-2 rounded hover:bg-red-500/10 text-mid-gray hover:text-red-500 transition-colors"
           title="Delete recording"
         >

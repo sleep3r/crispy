@@ -8,6 +8,9 @@
     "core:event:allow-emit",
     "core:event:allow-listen",
     "core:window:default",
-    "core:webview:default"
+    "core:webview:default",
+    "dialog:default",
+    "dialog:allow-ask",
+    "dialog:allow-confirm"
   ]
 }

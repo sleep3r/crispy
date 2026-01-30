@@ -38,8 +38,6 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [volume, setVolume] = useState(getStoredVolume());
-  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-
   const audioRef = useRef<HTMLAudioElement>(null);
   const animationRef = useRef<number>();
   const dragTimeRef = useRef<number>(0);
@@ -71,31 +69,24 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     }
   }, [volume]);
 
-  // Stable animation loop with no dependencies
+  // Stable animation loop for smooth progress during playback
   const tick = useCallback(() => {
     if (audioRef.current && !isDraggingRef.current) {
-      const time = audioRef.current.currentTime;
-      setCurrentTime(time);
+      setCurrentTime(audioRef.current.currentTime);
     }
-
     if (isPlayingRef.current) {
       animationRef.current = requestAnimationFrame(tick);
     }
   }, []);
 
-  // Manage animation loop lifecycle
+  // Start/stop animation loop when playing and not dragging
   useEffect(() => {
     if (isPlaying && !isDragging) {
-      if (!animationRef.current) {
-        animationRef.current = requestAnimationFrame(tick);
-      }
-    } else {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-        animationRef.current = undefined;
-      }
+      animationRef.current = requestAnimationFrame(tick);
+    } else if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = undefined;
     }
-
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
@@ -104,7 +95,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     };
   }, [isPlaying, isDragging, tick]);
 
-  // Audio event handlers
+  // Audio event handlers: metadata, ended, play/pause, and timeupdate for progress
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -130,16 +121,24 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       onPlayStateChange(false);
     };
 
+    const handleTimeUpdate = () => {
+      if (!isDraggingRef.current) {
+        setCurrentTime(audio.currentTime);
+      }
+    };
+
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
 
     return () => {
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
     };
   }, [onPlayStateChange]);
 
@@ -168,18 +167,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   const togglePlay = async () => {
     const audio = audioRef.current;
-    console.log("togglePlay called", { audio: !!audio, isPlaying, src });
-    if (!audio) {
-      console.error("Audio ref is null");
-      return;
-    }
+    if (!audio) return;
 
     try {
       if (isPlaying) {
-        console.log("Pausing audio");
         audio.pause();
       } else {
-        console.log("Playing audio, readyState:", audio.readyState);
         await audio.play();
       }
     } catch (error) {
@@ -225,14 +218,10 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  const getProgressPercent = (): number => {
-    if (duration <= 0) return 0;
-    if (duration - currentTime < 0.1) return 100;
-    const percent = (currentTime / duration) * 100;
-    return Math.min(100, Math.max(0, percent));
-  };
-
-  const progressPercent = getProgressPercent();
+  // Single source of truth for seek position; avoid max=0 so range input thumb stays in sync
+  const safeDuration = Math.max(duration, 0.01);
+  const seekValue = Math.min(Math.max(0, currentTime), safeDuration);
+  const progressPercent = duration <= 0 ? 0 : Math.min(100, (seekValue / duration) * 100);
 
   const VolumeIcon = volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
 
@@ -243,7 +232,6 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       {/* Play/Pause Button */}
       <button
         type="button"
-        data-tauri-drag-region="false"
         onClick={togglePlay}
         className="p-1 rounded hover:bg-mid-gray/10 transition-colors"
         aria-label={isPlaying ? "Pause" : "Play"}
@@ -265,23 +253,22 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           {/* Background track */}
           <div className="absolute inset-0 h-[4px] bg-mid-gray/20 rounded-full top-1/2 -translate-y-1/2" />
 
-          {/* Filled track */}
+          {/* Filled track — same value as input so thumb and fill stay in sync */}
           <div
-            className="absolute h-[4px] rounded-full top-1/2 -translate-y-1/2 transition-all duration-75 ease-out pointer-events-none"
+            className="absolute h-[4px] rounded-full top-1/2 -translate-y-1/2 pointer-events-none"
             style={{
               width: `${progressPercent}%`,
               backgroundColor: "var(--color-slider-fill)",
             }}
           />
 
-          {/* Seek input */}
+          {/* Seek input — value and max from same source so thumb matches fill */}
           <input
-            data-tauri-drag-region="false"
             type="range"
-            min="0"
-            max={duration || 0}
+            min={0}
+            max={safeDuration}
             step="0.01"
-            value={currentTime}
+            value={seekValue}
             onChange={handleSeek}
             onMouseDown={handleSeekMouseDown}
             onTouchStart={handleSeekTouchStart}
@@ -294,53 +281,35 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </span>
       </div>
 
-      {/* Volume Control */}
-      <div className="relative flex items-center gap-2">
+      {/* Volume: icon + inline slider (same row as other controls) */}
+      <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
-          data-tauri-drag-region="false"
           onClick={toggleMute}
-          onMouseEnter={() => setShowVolumeSlider(true)}
-          onMouseLeave={() => setShowVolumeSlider(false)}
           className="p-1 rounded hover:bg-mid-gray/10 transition-colors"
           aria-label={volume === 0 ? "Unmute" : "Mute"}
         >
           <VolumeIcon size={18} className="text-mid-gray" />
         </button>
-
-        {showVolumeSlider && (
+        <div className="relative w-20 h-6">
+          <div className="absolute inset-0 h-[4px] bg-mid-gray/20 rounded-full top-1/2 -translate-y-1/2" />
           <div
-            className="absolute right-0 bottom-full mb-2 px-3 py-2 bg-background border border-mid-gray/20 rounded-lg shadow-lg"
-            onMouseEnter={() => setShowVolumeSlider(true)}
-            onMouseLeave={() => setShowVolumeSlider(false)}
-          >
-            <div className="relative w-24 h-6">
-              {/* Background track */}
-              <div className="absolute inset-0 h-[4px] bg-mid-gray/20 rounded-full top-1/2 -translate-y-1/2" />
-
-              {/* Filled track */}
-              <div
-                className="absolute h-[4px] rounded-full top-1/2 -translate-y-1/2 transition-all duration-75 ease-out pointer-events-none"
-                style={{
-                  width: `${volume * 100}%`,
-                  backgroundColor: "var(--color-slider-fill)",
-                }}
-              />
-
-              {/* Volume input */}
-              <input
-                data-tauri-drag-region="false"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={volume}
-                onChange={handleVolumeChange}
-                className="relative w-full h-6 bg-transparent appearance-none cursor-pointer focus:outline-none slider-custom z-10"
-              />
-            </div>
-          </div>
-        )}
+            className="absolute h-[4px] rounded-full top-1/2 -translate-y-1/2 transition-all duration-75 ease-out pointer-events-none"
+            style={{
+              width: `${volume * 100}%`,
+              backgroundColor: "var(--color-slider-fill)",
+            }}
+          />
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            onChange={handleVolumeChange}
+            className="relative w-full h-6 bg-transparent appearance-none cursor-pointer focus:outline-none slider-custom z-10"
+          />
+        </div>
       </div>
     </div>
   );

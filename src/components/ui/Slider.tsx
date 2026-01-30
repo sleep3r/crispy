@@ -42,7 +42,6 @@ export const Slider: React.FC<SliderProps> = ({
         
         {/* Actual input */}
         <input
-          data-tauri-drag-region="false"
           type="range"
           min={min}
           max={max}

@@ -7,6 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use base64::Engine;
 use tauri::Emitter;
 use recording::{RecordingState, RecordableApp};
 
@@ -633,6 +634,10 @@ fn start_recording(
     
     *recording.writer.lock().unwrap() = Some(writer);
 
+    // Clear buffers so we only record from *after* the user pressed Start
+    recording.mic_buffer.lock().unwrap().clear();
+    recording.app_buffer.lock().unwrap().clear();
+
     // TODO: Start app audio capture via ScreenCaptureKit
     // For now, app_buffer will remain empty (recording mic only)
 
@@ -845,6 +850,13 @@ fn delete_recording(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn read_recording_file(path: String) -> Result<String, String> {
+    let bytes = std::fs::read(&path)
+        .map_err(|e| format!("Failed to read recording: {}", e))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -927,6 +939,7 @@ fn start_recording_worker(
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             audio: Arc::new(Mutex::new(AudioMonitorState {
                 input_stream: None,
@@ -952,7 +965,8 @@ fn main() {
             open_recordings_dir,
             open_url,
             get_recordings,
-            delete_recording
+            delete_recording,
+            read_recording_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
