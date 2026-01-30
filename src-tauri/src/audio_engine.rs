@@ -73,11 +73,6 @@ impl SharedMemoryWriter {
     pub fn write(&mut self, frames: &[f32]) -> usize {
         self.writer.write(frames)
     }
-    
-    /// Get current fill level
-    pub fn fill_level(&self) -> u32 {
-        self.writer.fill_level()
-    }
 }
 
 impl Drop for SharedMemoryWriter {
