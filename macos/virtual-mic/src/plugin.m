@@ -201,6 +201,8 @@ static Boolean PlugIn_HasProperty(AudioServerPlugInDriverRef driver, AudioObject
             switch (address->mSelector) {
                 case kAudioObjectPropertyManufacturer:
                 case kAudioObjectPropertyOwnedObjects:
+                case kAudioPlugInPropertyDeviceList:
+                case kAudioPlugInPropertyTranslateUIDToDevice:
                     hasProperty = true;
                     break;
             }
@@ -219,6 +221,10 @@ static Boolean PlugIn_HasProperty(AudioServerPlugInDriverRef driver, AudioObject
                 case kAudioDevicePropertyAvailableNominalSampleRates:
                 case kAudioDevicePropertyIsHidden:
                 case kAudioDevicePropertyZeroTimeStampPeriod:
+                case kAudioDevicePropertyDeviceIsAlive:
+                case kAudioDevicePropertyDeviceIsRunning:
+                case kAudioDevicePropertyLatency:
+                case kAudioDevicePropertySafetyOffset:
                     hasProperty = true;
                     break;
             }
@@ -254,6 +260,10 @@ static OSStatus PlugIn_GetPropertyDataSize(AudioServerPlugInDriverRef driver, Au
                     *outDataSize = sizeof(CFStringRef);
                     return kAudioHardwareNoError;
                 case kAudioObjectPropertyOwnedObjects:
+                case kAudioPlugInPropertyDeviceList:
+                    *outDataSize = sizeof(AudioObjectID);
+                    return kAudioHardwareNoError;
+                case kAudioPlugInPropertyTranslateUIDToDevice:
                     *outDataSize = sizeof(AudioObjectID);
                     return kAudioHardwareNoError;
             }
@@ -271,22 +281,27 @@ static OSStatus PlugIn_GetPropertyDataSize(AudioServerPlugInDriverRef driver, Au
                     *outDataSize = sizeof(AudioObjectID);
                     return kAudioHardwareNoError;
                 case kAudioDevicePropertyTransportType:
+                case kAudioDevicePropertyIsHidden:
+                case kAudioDevicePropertyZeroTimeStampPeriod:
+                case kAudioDevicePropertyDeviceIsAlive:
+                case kAudioDevicePropertyDeviceIsRunning:
+                case kAudioDevicePropertyLatency:
+                case kAudioDevicePropertySafetyOffset:
                     *outDataSize = sizeof(UInt32);
                     return kAudioHardwareNoError;
                 case kAudioDevicePropertyStreams:
-                    *outDataSize = sizeof(AudioBufferList) + sizeof(AudioBuffer);
+                    // Return stream object IDs (scope-sensitive)
+                    if (address->mScope == kAudioObjectPropertyScopeInput) {
+                        *outDataSize = sizeof(AudioObjectID); // 1 input stream
+                    } else {
+                        *outDataSize = 0; // no output streams
+                    }
                     return kAudioHardwareNoError;
                 case kAudioDevicePropertyNominalSampleRate:
                     *outDataSize = sizeof(Float64);
                     return kAudioHardwareNoError;
                 case kAudioDevicePropertyAvailableNominalSampleRates:
                     *outDataSize = sizeof(AudioValueRange);
-                    return kAudioHardwareNoError;
-                case kAudioDevicePropertyIsHidden:
-                    *outDataSize = sizeof(UInt32);
-                    return kAudioHardwareNoError;
-                case kAudioDevicePropertyZeroTimeStampPeriod:
-                    *outDataSize = sizeof(UInt32);
                     return kAudioHardwareNoError;
             }
             break;
@@ -323,9 +338,20 @@ static OSStatus PlugIn_GetPropertyData(AudioServerPlugInDriverRef driver, AudioO
                     *((CFStringRef*)outData) = CFSTR("Crispy");
                     return kAudioHardwareNoError;
                 case kAudioObjectPropertyOwnedObjects:
+                case kAudioPlugInPropertyDeviceList:
                     *outDataSize = sizeof(AudioObjectID);
                     ((AudioObjectID*)outData)[0] = kObjectID_Device;
                     return kAudioHardwareNoError;
+                case kAudioPlugInPropertyTranslateUIDToDevice:
+                    if (qualifierDataSize == sizeof(CFStringRef)) {
+                        CFStringRef uid = *((CFStringRef*)qualifierData);
+                        if (CFStringCompare(uid, CFSTR(kDevice_UID), 0) == kCFCompareEqualTo) {
+                            *outDataSize = sizeof(AudioObjectID);
+                            *((AudioObjectID*)outData) = kObjectID_Device;
+                            return kAudioHardwareNoError;
+                        }
+                    }
+                    return kAudioHardwareBadObjectError;
             }
             break;
             
@@ -356,9 +382,26 @@ static OSStatus PlugIn_GetPropertyData(AudioServerPlugInDriverRef driver, AudioO
                     *((UInt32*)outData) = kAudioDeviceTransportTypeVirtual;
                     return kAudioHardwareNoError;
                 case kAudioDevicePropertyStreams:
-                    *outDataSize = sizeof(AudioBufferList);
-                    ((AudioBufferList*)outData)->mNumberBuffers = 1;
-                    ((AudioBufferList*)outData)->mBuffers[0].mNumberChannels = kChannels;
+                    // Return stream object IDs (scope-sensitive)
+                    if (address->mScope == kAudioObjectPropertyScopeInput) {
+                        *outDataSize = sizeof(AudioObjectID);
+                        ((AudioObjectID*)outData)[0] = kObjectID_Stream;
+                    } else {
+                        *outDataSize = 0; // no output streams
+                    }
+                    return kAudioHardwareNoError;
+                case kAudioDevicePropertyDeviceIsAlive:
+                    *outDataSize = sizeof(UInt32);
+                    *((UInt32*)outData) = 1;
+                    return kAudioHardwareNoError;
+                case kAudioDevicePropertyDeviceIsRunning:
+                    *outDataSize = sizeof(UInt32);
+                    *((UInt32*)outData) = gPlugIn ? gPlugIn->isIORunning : 0;
+                    return kAudioHardwareNoError;
+                case kAudioDevicePropertyLatency:
+                case kAudioDevicePropertySafetyOffset:
+                    *outDataSize = sizeof(UInt32);
+                    *((UInt32*)outData) = 0;
                     return kAudioHardwareNoError;
                 case kAudioDevicePropertyNominalSampleRate:
                     *outDataSize = sizeof(Float64);

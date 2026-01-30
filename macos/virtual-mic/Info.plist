@@ -30,5 +30,7 @@
             <string>12345678-9ABC-DEF0-1122-334455667788</string>
         </array>
     </dict>
+    <key>AudioDriverProcessingLocation</key>
+    <string>InProcess</string>
 </dict>
 </plist>

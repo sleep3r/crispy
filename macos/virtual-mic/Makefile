@@ -5,7 +5,6 @@ BUNDLE_ID = com.example.crispy.virtualmicrophone
 DRIVER_BUNDLE = $(PLUGIN_NAME).driver
 
 # Directories
-# Build for x86_64 since Rust toolchain is x86_64 (works on Apple Silicon via Rosetta)
 ARCH = arm64
 BUILD_DIR = ../../target
 RUST_LIB = $(BUILD_DIR)/release/libcrispy_virtual_mic_core.a
@@ -27,7 +26,7 @@ all: $(BUNDLE_DIR)
 # Build Rust static library (release mode)
 $(RUST_LIB):
 	@echo "Building Rust core library..."
-	cd ../.. && cargo build --release -p crispy_virtual_mic_plugin
+	cd ../.. && PATH="$$HOME/.cargo/bin:$$PATH" cargo build --release -p crispy_virtual_mic_plugin
 
 # Create bundle structure
 $(BUNDLE_DIR): $(RUST_LIB)
