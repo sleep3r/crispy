@@ -5,7 +5,13 @@ import { Slider } from "../ui/Slider";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 
-export const MicrophoneVolume: React.FC = () => {
+interface MicrophoneVolumeProps {
+  disabled?: boolean;
+}
+
+export const MicrophoneVolume: React.FC<MicrophoneVolumeProps> = ({
+  disabled = false,
+}) => {
   const { getSetting, updateSetting } = useSettings();
 
   const selectedMicrophone = getSetting("selected_microphone");
@@ -22,7 +28,7 @@ export const MicrophoneVolume: React.FC = () => {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
-    if (!selectedMicrophone) {
+    if (disabled || !selectedMicrophone) {
       lastLevel.current = 0;
       if (meterRef.current) meterRef.current.style.width = "0%";
       return;
@@ -69,7 +75,7 @@ export const MicrophoneVolume: React.FC = () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       invoke("stop_monitoring").catch(console.error);
     };
-  }, [selectedMicrophone]);
+  }, [selectedMicrophone, disabled]);
 
   const handleVolumeChange = (value: number) => {
     updateSetting("microphone_volume", value.toString());
@@ -90,6 +96,7 @@ export const MicrophoneVolume: React.FC = () => {
             step={1}
             onChange={handleVolumeChange}
             className="flex-1"
+            disabled={disabled}
           />
           <span className="text-sm font-medium w-10 text-right tabular-nums">{volume}%</span>
         </div>

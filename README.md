@@ -12,23 +12,21 @@ Crispy is a cross-platform desktop application built with Tauri (Rust + React/Ty
 
 ## Current Status
 
-🚧 **Early Development** - Virtual Microphone Implemented!
+🚧 **Early Development**
 
-Crispy now includes a working virtual microphone for macOS that other apps can use as an input device:
-*   ✅ **Virtual Microphone** - CoreAudio AudioServerPlugIn that creates "Crispy Microphone" device
-*   ✅ **Real-time Audio Pipeline** - Captures, resamples, and processes audio with shared-memory IPC
-*   ✅ **Microphone and Output device selection** - Working device enumeration and selection
-*   ✅ **Live audio monitoring** - Real-time level meters and monitoring
+Current focus:
+*   ✅ **Device selection** - Working input/output device enumeration
+*   ✅ **Live audio monitoring** - Real-time input level meters
+*   ✅ **BlackHole 2 integration** - Required for audio routing on macOS
 *   🚧 **Noise suppression** - DSP framework in place, awaiting ML model integration
 
 ## Quick Start
 
 ### Prerequisites
 
-*   macOS (for virtual microphone support)
+*   macOS (for BlackHole 2 routing)
 *   Node.js (for frontend)
 *   Rust (for backend)
-*   Xcode Command Line Tools: `xcode-select --install`
 
 ### Development
 
@@ -38,11 +36,12 @@ Crispy now includes a working virtual microphone for macOS that other apps can u
     # or: npm install
     ```
 
-2.  **Install virtual microphone plugin (macOS only):**
+2.  **Install BlackHole 2ch (macOS only):**
     ```bash
-    make plugin-install
+    # Download and install from:
+    # https://existential.audio/blackhole/
     ```
-    This creates the "Crispy Microphone" virtual device that other apps can use.
+    BlackHole 2ch is required for routing audio to other apps.
 
 3.  **Run in development mode:**
     ```bash
@@ -56,51 +55,42 @@ Crispy now includes a working virtual microphone for macOS that other apps can u
     # or: npm run tauri build
     ```
 
-### Using the Virtual Microphone
+### Audio Routing
 
-Once installed, "Crispy Microphone" will appear in:
-- System Settings → Sound → Input
-- Zoom, Discord, OBS, etc. audio input selection
-
-See [VIRTUAL_MIC.md](VIRTUAL_MIC.md) for detailed documentation.
+Crispy relies on **BlackHole 2ch** for macOS audio routing. If BlackHole is not installed,
+the app will warn you and disable audio routing features.
 
 ## Architecture
 
-Crispy is built as a Tauri application with a multi-component audio pipeline:
+Crispy is built as a Tauri application with a simple audio pipeline:
 
 *   **Frontend**: React + TypeScript with Tailwind CSS (v4) for the UI
 *   **Backend**: Rust using CPAL for audio I/O and custom real-time processing
-*   **Virtual Mic Plugin**: CoreAudio AudioServerPlugIn (Rust + C shim) with lock-free shared memory IPC
-*   **Audio Engine**: Capture → Resample → Downmix → Process → Ring Buffer → Virtual Device
+*   **Audio Engine**: Capture → Process → Meter
+*   **Routing**: BlackHole 2ch (system driver)
 
 ```
-Physical Mic → Crispy App → Shared Memory → Virtual Mic Plugin → Zoom/Discord/etc.
+Physical Mic → Crispy App → BlackHole 2ch → Zoom/Discord/etc.
 ```
 
 ## Roadmap
 
 *   [x] UI Scaffold (Handy-inspired)
 *   [x] Device Selection UI
-*   [x] Real-time Audio Processing Pipeline
-*   [x] Virtual Audio Device implementation (macOS)
-*   [x] Shared-memory IPC with lock-free ring buffer
-*   [x] Automatic resampling and format conversion
+*   [x] Real-time Audio Monitoring
+*   [x] BlackHole-based routing on macOS
 *   [ ] Noise Suppression Model Integration
 *   [ ] DSP effects (compression, EQ, etc.)
 *   [ ] Windows virtual audio device support
 
 ## Documentation
 
-- [VIRTUAL_MIC.md](VIRTUAL_MIC.md) - Complete virtual microphone documentation
 - [Makefile](Makefile) - All available build targets and commands
 
 ## Helpful Commands
 
 ```bash
 make help              # Show all available commands
-make plugin-install    # Install virtual microphone plugin
-make plugin-status     # Check if plugin is installed
-make plugin-test       # Test with tone generator
 make dev              # Run in development mode
 ```
 

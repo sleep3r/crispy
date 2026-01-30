@@ -7,10 +7,11 @@ import { useSettings } from "../../hooks/useSettings";
 interface MicrophoneSelectorProps {
   descriptionMode?: "inline" | "tooltip";
   grouped?: boolean;
+  disabled?: boolean;
 }
 
 export const MicrophoneSelector: React.FC<MicrophoneSelectorProps> = React.memo(
-  ({ descriptionMode = "tooltip", grouped = false }) => {
+  ({ descriptionMode = "tooltip", grouped = false, disabled = false }) => {
     const {
       getSetting,
       updateSetting,
@@ -59,6 +60,7 @@ export const MicrophoneSelector: React.FC<MicrophoneSelectorProps> = React.memo(
                 : "Choose a microphone"
             }
             disabled={
+              disabled ||
               isUpdating("selected_microphone") ||
               isLoading ||
               audioDevices.length === 0
@@ -67,7 +69,7 @@ export const MicrophoneSelector: React.FC<MicrophoneSelectorProps> = React.memo(
           />
           <ResetButton
             onClick={handleReset}
-            disabled={isUpdating("selected_microphone") || isLoading}
+            disabled={disabled || isUpdating("selected_microphone") || isLoading}
           />
         </div>
       </SettingContainer>

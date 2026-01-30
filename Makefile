@@ -1,4 +1,4 @@
-.PHONY: help install dev build clean check test fmt lint plugin-build plugin-install plugin-uninstall plugin-restart plugin-status
+.PHONY: help install dev build clean check test fmt lint
 
 # Default target
 .DEFAULT_GOAL := help
@@ -112,50 +112,6 @@ version-bump: ## Bump version (TYPE=major|minor|patch, default patch)
 version: ## Show current version
 	@VERSION=$$(grep '"version":' package.json | head -1 | sed 's/.*"version": "\(.*\)".*/\1/'); \
 	echo "$(GREEN)Current version: $$VERSION$(NC)"
-
-# Plugin targets (macOS only)
-plugin-build: ## Build the virtual microphone plugin
-	@echo "$(BLUE)Building virtual microphone plugin...$(NC)"
-	cd macos/virtual-mic && $(MAKE)
-	@echo "$(GREEN)✅ Plugin built at target/CrispyVirtualMic.driver$(NC)"
-
-plugin-install: plugin-build ## Install the virtual microphone plugin (requires sudo)
-	@echo "$(BLUE)Installing virtual microphone plugin...$(NC)"
-	cd macos/virtual-mic && $(MAKE) install
-	@echo "$(GREEN)✅ Plugin installed$(NC)"
-	@echo "$(YELLOW)Restarting CoreAudio...$(NC)"
-	@$(MAKE) plugin-restart
-
-plugin-uninstall: ## Uninstall the virtual microphone plugin (requires sudo)
-	@echo "$(BLUE)Uninstalling virtual microphone plugin...$(NC)"
-	cd macos/virtual-mic && $(MAKE) uninstall
-	@echo "$(GREEN)✅ Plugin uninstalled$(NC)"
-	@echo "$(YELLOW)Restarting CoreAudio...$(NC)"
-	@$(MAKE) plugin-restart
-
-plugin-restart: ## Restart CoreAudio daemon (requires sudo)
-	@echo "$(BLUE)Restarting CoreAudio daemon...$(NC)"
-	@sudo killall coreaudiod >/dev/null 2>&1 || true
-	@sudo launchctl kickstart -k system/com.apple.audio.coreaudiod || true
-	@echo "$(YELLOW)If the device doesn't appear, restart CoreAudio manually:$(NC)"
-	@echo "  sudo killall coreaudiod"
-	@echo "  (or reboot if SIP blocks launchctl)"
-
-plugin-status: ## Check if virtual microphone plugin is installed
-	@echo "$(BLUE)Checking virtual microphone plugin status...$(NC)"
-	@if [ -d "/Library/Audio/Plug-Ins/HAL/CrispyVirtualMic.driver" ]; then \
-		echo "$(GREEN)✅ Plugin is installed$(NC)"; \
-		ls -lh /Library/Audio/Plug-Ins/HAL/CrispyVirtualMic.driver; \
-	else \
-		echo "$(YELLOW)⚠️  Plugin is not installed$(NC)"; \
-		echo "Run: make plugin-install"; \
-	fi
-
-plugin-test: ## Run tone writer to test virtual microphone
-	@echo "$(BLUE)Running tone writer (440Hz sine wave)...$(NC)"
-	@echo "$(YELLOW)Press Ctrl+C to stop$(NC)"
-	@echo ""
-	cargo run --release --example tone_writer
 
 # Short aliases
 i: install ## Alias for install

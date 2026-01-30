@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "src-tauri",
-    "crates/virtual_mic_ipc",
-    "macos/virtual-mic",
 ]
 resolver = "2"
 

@@ -7,12 +7,10 @@ name = "Crispy"
 version = "0.1.0"
 dependencies = [
  "cpal",
- "libc",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
- "virtual_mic_ipc",
 ]
 
 [[package]]
@@ -458,14 +456,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "crispy_virtual_mic_plugin"
-version = "0.1.0"
-dependencies = [
- "libc",
- "virtual_mic_ipc",
 ]
 
 [[package]]
@@ -3921,13 +3911,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "virtual_mic_ipc"
-version = "0.1.0"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "vswhom"

@@ -5,4 +5,3 @@ export { GeneralSettings } from "./general/GeneralSettings";
 export { MicrophoneSelector } from "./MicrophoneSelector";
 export { OutputDeviceSelector } from "./OutputDeviceSelector";
 export { MicrophoneVolume } from "./MicrophoneVolume";
-export { VirtualMicStatus } from "./VirtualMicStatus";
