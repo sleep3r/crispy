@@ -52,3 +52,6 @@ collect_debug_code.sh
 debug_code_dump.txt
 prompt_for_gpt.md
 final_gpt_request.txt
+
+# Debug folder
+debug/

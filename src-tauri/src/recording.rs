@@ -16,6 +16,7 @@ pub struct RecordingState {
     pub writer: Arc<Mutex<Option<WavWriter>>>,
     pub mic_buffer: Arc<Mutex<VecDeque<f32>>>,
     pub app_buffer: Arc<Mutex<VecDeque<f32>>>,
+    pub worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl RecordingState {
@@ -24,6 +25,7 @@ impl RecordingState {
             writer: Arc::new(Mutex::new(None)),
             mic_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(SAMPLE_RATE * 10))),
             app_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(SAMPLE_RATE * 10))),
+            worker: None,
         }
     }
 }

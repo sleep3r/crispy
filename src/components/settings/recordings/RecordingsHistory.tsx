@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { FolderOpen, Trash2, Play, Pause } from "lucide-react";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { FolderOpen, Trash2 } from "lucide-react";
+import { AudioPlayer } from "../../ui/AudioPlayer";
 
 interface RecordingFile {
   name: string;
@@ -31,6 +31,7 @@ export const RecordingsHistory: React.FC = () => {
   const [recordings, setRecordings] = useState<RecordingFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentlyPlayingPath, setCurrentlyPlayingPath] = useState<string | null>(null);
 
   const loadRecordings = useCallback(async () => {
     try {
@@ -174,6 +175,10 @@ export const RecordingsHistory: React.FC = () => {
             <RecordingEntry
               key={recording.path}
               recording={recording}
+              isActive={currentlyPlayingPath === recording.path}
+              onPlayStateChange={(playing) => {
+                setCurrentlyPlayingPath(playing ? recording.path : null);
+              }}
               onDelete={() => deleteRecording(recording.path)}
             />
           ))}
@@ -185,76 +190,53 @@ export const RecordingsHistory: React.FC = () => {
 
 interface RecordingEntryProps {
   recording: RecordingFile;
+  isActive: boolean;
+  onPlayStateChange: (playing: boolean) => void;
   onDelete: () => void;
 }
 
 const RecordingEntry: React.FC<RecordingEntryProps> = ({
   recording,
+  isActive,
+  onPlayStateChange,
   onDelete,
 }) => {
-  const [isPlaying, setIsPlaying] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string>("");
-  const audioRef = React.useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
     const url = convertFileSrc(recording.path);
+    console.log("Recording entry:", { path: recording.path, url });
     setAudioUrl(url);
   }, [recording.path]);
 
-  const togglePlay = () => {
-    if (!audioRef.current) return;
-
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
-    }
-    setIsPlaying(!isPlaying);
-  };
-
-  const handleAudioEnd = () => {
-    setIsPlaying(false);
-  };
-
   return (
-    <div className="px-4 py-3 flex items-center justify-between">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <button
-            type="button"
-            onClick={togglePlay}
-            className="p-1 rounded hover:bg-mid-gray/10 transition-colors"
-            title={isPlaying ? "Pause" : "Play"}
-          >
-            {isPlaying ? (
-              <Pause size={18} className="text-logo-primary" />
-            ) : (
-              <Play size={18} className="text-mid-gray" />
-            )}
-          </button>
-          <p className="text-sm font-medium truncate">{recording.name}</p>
-        </div>
-        <div className="flex items-center gap-3 text-xs text-mid-gray ml-8">
-          <span>{formatDate(recording.created)}</span>
-          <span>•</span>
-          <span>{formatFileSize(recording.size)}</span>
-        </div>
-        <audio
-          ref={audioRef}
-          src={audioUrl}
-          onEnded={handleAudioEnd}
-          onPause={() => setIsPlaying(false)}
-          onPlay={() => setIsPlaying(true)}
-        />
+    <div className="px-4 py-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium truncate">{recording.name}</p>
+        <button
+          type="button"
+          data-tauri-drag-region="false"
+          onClick={() => {
+            console.log("Delete button clicked");
+            onDelete();
+          }}
+          className="p-2 rounded hover:bg-red-500/10 text-mid-gray hover:text-red-500 transition-colors"
+          title="Delete recording"
+        >
+          <Trash2 size={16} />
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        className="p-2 rounded hover:bg-red-500/10 text-mid-gray hover:text-red-500 transition-colors"
-        title="Delete recording"
-      >
-        <Trash2 size={16} />
-      </button>
+      <div className="flex items-center gap-3 text-xs text-mid-gray">
+        <span>{formatDate(recording.created)}</span>
+        <span>•</span>
+        <span>{formatFileSize(recording.size)}</span>
+      </div>
+      <AudioPlayer
+        src={audioUrl}
+        isActive={isActive}
+        onPlayStateChange={onPlayStateChange}
+        className="w-full"
+      />
     </div>
   );
 };

@@ -606,7 +606,7 @@ fn start_recording(
     state: tauri::State<AppState>,
     _app_id: String,
 ) -> Result<(), String> {
-    let recording = state.recording.lock().unwrap();
+    let mut recording = state.recording.lock().unwrap();
     
     if recording.writer.lock().unwrap().is_some() {
         return Err("Recording already in progress".to_string());
@@ -638,12 +638,14 @@ fn start_recording(
 
     println!("Starting recording worker...");
     
-    // Start mixing worker thread
-    start_recording_worker(
+    // Start mixing worker thread and store handle
+    let handle = start_recording_worker(
         recording.mic_buffer.clone(),
         recording.app_buffer.clone(),
         recording.writer.clone(),
     );
+    
+    recording.worker = Some(handle);
 
     println!("Recording started successfully");
     Ok(())
@@ -651,11 +653,24 @@ fn start_recording(
 
 #[tauri::command]
 fn stop_recording(state: tauri::State<AppState>) -> Result<String, String> {
+    println!("Stop recording requested");
+    
     // Signal worker to stop
     RECORDING_ACTIVE.store(false, Ordering::SeqCst);
     
-    // Give worker thread time to finish
-    thread::sleep(Duration::from_millis(100));
+    // Take worker handle and join it
+    let worker_handle = {
+        let mut recording = state.recording.lock().unwrap();
+        recording.worker.take()
+    };
+    
+    if let Some(handle) = worker_handle {
+        println!("Joining worker thread...");
+        match handle.join() {
+            Ok(_) => println!("Worker thread joined successfully"),
+            Err(e) => eprintln!("Worker thread panicked: {:?}", e),
+        }
+    }
     
     // TODO: Stop ScreenCaptureKit stream when implemented
 
@@ -665,8 +680,11 @@ fn stop_recording(state: tauri::State<AppState>) -> Result<String, String> {
     let app_buffer = recording.app_buffer.clone();
     drop(recording);
 
+    println!("Taking writer for finalization...");
     if let Some(writer) = writer_option.lock().unwrap().take() {
+        println!("Finalizing WAV file...");
         let output_path = writer.finalize()?;
+        println!("WAV finalized: {:?}", output_path);
 
         // Clear buffers after finalize
         mic_buffer.lock().unwrap().clear();
@@ -836,7 +854,7 @@ fn start_recording_worker(
     mic_buffer: Arc<Mutex<VecDeque<f32>>>,
     app_buffer: Arc<Mutex<VecDeque<f32>>>,
     writer: Arc<Mutex<Option<recording::WavWriter>>>,
-) {
+) -> std::thread::JoinHandle<()> {
     RECORDING_ACTIVE.store(true, Ordering::SeqCst);
     
     thread::spawn(move || {
@@ -848,54 +866,63 @@ fn start_recording_worker(
         println!("Recording worker started");
 
         while RECORDING_ACTIVE.load(Ordering::SeqCst) {
-            let has_writer = writer.lock().unwrap().is_some();
-            if !has_writer {
-                println!("Writer is None, stopping worker");
-                break;
+            // Check if writer still exists
+            {
+                let has_writer = writer.lock().unwrap().is_none();
+                if has_writer {
+                    println!("Writer is None, stopping worker");
+                    break;
+                }
             }
 
-            // Pull samples from buffers
-            let mut mic_buf = mic_buffer.lock().unwrap();
-            let app_buf = app_buffer.lock().unwrap();
+            // --- Pull mic frame ---
+            let mic_available = {
+                let mic_buf = mic_buffer.lock().unwrap();
+                mic_buf.len()
+            };
 
-            // For now, only record mic (app_buffer is empty until ScreenCaptureKit is implemented)
-            let mic_available = mic_buf.len();
             if mic_available < frame_size {
-                drop(mic_buf);
-                drop(app_buf);
                 thread::sleep(Duration::from_millis(10));
                 continue;
             }
 
-            // Fill left channel with mic, right channel with app audio (or silence if empty)
-            for i in 0..frame_size {
-                left_frame[i] = mic_buf.pop_front().unwrap_or(0.0);
-            }
-            drop(mic_buf);
-            
-            // Try to get app audio if available, otherwise fill with silence
-            let mut app_buf = app_buffer.lock().unwrap();
-            for i in 0..frame_size {
-                right_frame[i] = app_buf.pop_front().unwrap_or(0.0);
-            }
-            drop(app_buf);
+            // Lock and pull mic samples
+            {
+                let mut mic_buf = mic_buffer.lock().unwrap();
+                for i in 0..frame_size {
+                    left_frame[i] = mic_buf.pop_front().unwrap_or(0.0);
+                }
+            } // mic_buf lock dropped here
 
-            // Write to WAV
-            if let Some(writer) = writer.lock().unwrap().as_mut() {
-                if let Err(e) = writer.write_samples(&left_frame, &right_frame) {
-                    eprintln!("Recording write error: {}", e);
+            // --- Pull app frame (or silence) ---
+            {
+                let mut app_buf = app_buffer.lock().unwrap();
+                for i in 0..frame_size {
+                    right_frame[i] = app_buf.pop_front().unwrap_or(0.0);
+                }
+            } // app_buf lock dropped here
+
+            // --- Write to WAV ---
+            {
+                let mut guard = writer.lock().unwrap();
+                if let Some(w) = guard.as_mut() {
+                    if let Err(e) = w.write_samples(&left_frame, &right_frame) {
+                        eprintln!("Recording write error: {}", e);
+                        break;
+                    }
+                    frames_encoded += 1;
+                    if frames_encoded % 100 == 0 {
+                        println!("Wrote {} frames", frames_encoded);
+                    }
+                } else {
                     break;
                 }
-                frames_encoded += 1;
-                if frames_encoded % 100 == 0 {
-                    println!("Wrote {} frames", frames_encoded);
-                }
-            }
+            } // writer lock dropped here
         }
 
         println!("Recording worker stopped. Total frames encoded: {}", frames_encoded);
         RECORDING_ACTIVE.store(false, Ordering::SeqCst);
-    });
+    })
 }
 
 fn main() {
