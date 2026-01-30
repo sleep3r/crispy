@@ -5,30 +5,28 @@ import { Slider } from "../ui/Slider";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
 
-interface MicrophoneVolumeProps {
-  disabled?: boolean;
-}
-
-export const MicrophoneVolume: React.FC<MicrophoneVolumeProps> = ({
-  disabled = false,
-}) => {
+export const MicrophoneVolume: React.FC = () => {
   const { getSetting, updateSetting } = useSettings();
 
   const selectedMicrophone = getSetting("selected_microphone");
+  const selectedOutputDevice = getSetting("selected_output_device") || "";
   const volume = Number.parseInt(getSetting("microphone_volume") || "100", 10);
+  const selectedModel = getSetting("selected_model") || "dummy";
 
   const requestRef = useRef<number>();
   const lastLevel = useRef(0);
   const meterRef = useRef<HTMLDivElement>(null);
   const volumeRef = useRef(volume);
+  const modelRef = useRef(selectedModel);
 
   // Keep latest volume available inside RAF loop
   volumeRef.current = volume;
+  modelRef.current = selectedModel;
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
-    if (disabled || !selectedMicrophone) {
+    if (!selectedMicrophone) {
       lastLevel.current = 0;
       if (meterRef.current) meterRef.current.style.width = "0%";
       return;
@@ -43,11 +41,23 @@ export const MicrophoneVolume: React.FC<MicrophoneVolumeProps> = ({
           const gain = 5.2;
           const normalized = Math.max(0, raw - noiseFloor) / (1 - noiseFloor);
           const curved = Math.pow(Math.min(normalized * gain, 1), 0.3);
-          const visual = Math.min(curved, 1);
+          let visual = Math.min(curved, 1);
+
+          if (modelRef.current === "noisy") {
+            const noiseBase = 0.08;
+            const noiseJitter = (Math.random() - 0.5) * 0.06;
+            visual = Math.min(Math.max(visual + noiseBase + noiseJitter, 0), 1);
+          }
+
           lastLevel.current = lastLevel.current * 0.7 + visual * 0.3;
         });
 
-        await invoke("start_monitoring", { deviceName: selectedMicrophone });
+        await invoke("start_monitoring", {
+          deviceName: selectedMicrophone,
+          outputDeviceName: selectedOutputDevice,
+          modelName: selectedModel,
+          volume: volume / 100,
+        });
       } catch (error) {
         console.error("Failed to initialize monitoring:", error);
       }
@@ -75,7 +85,21 @@ export const MicrophoneVolume: React.FC<MicrophoneVolumeProps> = ({
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       invoke("stop_monitoring").catch(console.error);
     };
-  }, [selectedMicrophone, disabled]);
+  }, [selectedMicrophone, selectedOutputDevice]);
+
+  useEffect(() => {
+    if (!selectedMicrophone) return;
+    invoke("set_monitoring_volume", { volume: volume / 100 }).catch(
+      console.error,
+    );
+  }, [selectedMicrophone, volume]);
+
+  useEffect(() => {
+    if (!selectedMicrophone) return;
+    invoke("set_monitoring_model", { modelName: selectedModel }).catch(
+      console.error,
+    );
+  }, [selectedMicrophone, selectedModel]);
 
   const handleVolumeChange = (value: number) => {
     updateSetting("microphone_volume", value.toString());
@@ -96,7 +120,6 @@ export const MicrophoneVolume: React.FC<MicrophoneVolumeProps> = ({
             step={1}
             onChange={handleVolumeChange}
             className="flex-1"
-            disabled={disabled}
           />
           <span className="text-sm font-medium w-10 text-right tabular-nums">{volume}%</span>
         </div>

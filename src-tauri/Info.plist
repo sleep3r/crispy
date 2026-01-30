@@ -4,5 +4,7 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>Request microphone access for noise suppression</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Crispy needs screen recording permission to capture app audio for meeting recordings</string>
 </dict>
 </plist>

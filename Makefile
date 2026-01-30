@@ -83,8 +83,6 @@ update: ## Update dependencies
 	cd src-tauri && cargo update
 	@echo "$(GREEN)✅ Dependencies updated$(NC)"
 
-run: dev ## Alias for dev
-
 version-bump: ## Bump version (TYPE=major|minor|patch, default patch)
 	@echo "$(BLUE)Updating version...$(NC)"
 	@TYPE=$(if $(TYPE),$(TYPE),patch); \

@@ -1,7 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-type SettingKey = "selected_microphone" | "selected_output_device" | "microphone_volume";
+type SettingKey =
+  | "selected_microphone"
+  | "selected_output_device"
+  | "microphone_volume"
+  | "selected_model";
 
 interface AudioDevice {
   id: string;
@@ -12,12 +16,14 @@ interface SettingsState {
   selected_microphone: string;
   selected_output_device: string;
   microphone_volume: string;
+  selected_model: string;
 }
 
 const defaultSettings: SettingsState = {
   selected_microphone: "",
   selected_output_device: "",
   microphone_volume: "100",
+  selected_model: "dummy",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };
@@ -97,13 +103,39 @@ export const useSettings = () => {
     }
   }, []);
 
+  const initializeDefaultDevices = useCallback(async () => {
+    try {
+      const defaults = await invoke<{
+        default_input: string | null;
+        blackhole_output: string | null;
+      }>("get_default_devices");
+
+      // Set default input if not already set
+      if (!settingsState.selected_microphone && defaults.default_input) {
+        updateState({ selected_microphone: defaults.default_input });
+      }
+
+      // Set BlackHole output if found and not already set
+      if (!settingsState.selected_output_device && defaults.blackhole_output) {
+        updateState({ selected_output_device: defaults.blackhole_output });
+      }
+    } catch (error) {
+      console.error("Failed to initialize default devices:", error);
+    }
+  }, []);
+
   // Fetch devices only once per app session
   useEffect(() => {
     if (didInitDevices) return;
     didInitDevices = true;
-    refreshAudioDevices();
-    refreshOutputDevices();
-  }, [refreshAudioDevices, refreshOutputDevices]);
+    
+    const init = async () => {
+      await Promise.all([refreshAudioDevices(), refreshOutputDevices()]);
+      await initializeDefaultDevices();
+    };
+    
+    init();
+  }, [refreshAudioDevices, refreshOutputDevices, initializeDefaultDevices]);
 
   const getSetting = (key: SettingKey) => settings[key];
 

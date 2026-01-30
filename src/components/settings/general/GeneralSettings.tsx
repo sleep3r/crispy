@@ -4,13 +4,18 @@ import {
   MicrophoneSelector,
   OutputDeviceSelector,
   MicrophoneVolume,
+  RecordingControls,
 } from "../";
 import { useBlackHoleStatus } from "../../../hooks/useBlackHoleStatus";
+import { useSettings } from "../../../hooks/useSettings";
 
 export const GeneralSettings: React.FC = () => {
   const { status, isLoading, error, refresh } = useBlackHoleStatus();
+  const { getSetting } = useSettings();
   const isBlackHoleInstalled = status?.installed ?? false;
-  const isBlocked = !isLoading && !isBlackHoleInstalled;
+  const showWarning = !isLoading && !isBlackHoleInstalled;
+  const selectedOutput = getSetting("selected_output_device");
+  const showOutputHint = !selectedOutput;
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-3xl">
@@ -27,12 +32,12 @@ export const GeneralSettings: React.FC = () => {
         </div>
       )}
 
-      {isBlocked && (
+      {showWarning && (
         <div className="px-4 py-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-sm text-yellow-800">
-          <div className="font-medium">BlackHole 2 required</div>
+          <div className="font-medium">BlackHole 2 is not installed</div>
           <div className="mt-1 text-yellow-700/90">
-            Install BlackHole 2ch to continue. Without it, the audio routing
-            won’t work.
+            Audio routing may be unreliable without it. We recommend installing
+            BlackHole 2ch, but you can ignore this warning.
           </div>
           <button
             type="button"
@@ -44,13 +49,29 @@ export const GeneralSettings: React.FC = () => {
         </div>
       )}
 
+      {showOutputHint && !showWarning && (
+        <div className="px-4 py-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-sm text-blue-800">
+          <div className="font-medium">Output device not selected</div>
+          <div className="mt-1 text-blue-700/90">
+            Please select an output device (BlackHole recommended) to route processed audio.
+          </div>
+        </div>
+      )}
+
       <SettingsGroup
         title="Audio I/O"
         description="Pick your microphone input and output device."
       >
-        <MicrophoneSelector grouped disabled={isBlocked} />
-        <MicrophoneVolume disabled={isBlocked} />
-        <OutputDeviceSelector grouped disabled={isBlocked} />
+        <MicrophoneSelector grouped />
+        <MicrophoneVolume />
+        <OutputDeviceSelector grouped />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Recording"
+        description="Record meetings with processed mic + app audio."
+      >
+        <RecordingControls />
       </SettingsGroup>
     </div>
   );

@@ -1,9 +1,11 @@
 import React from "react";
-import { Mic, Info } from "lucide-react";
+import { Mic, Info, History } from "lucide-react";
 import HandyTextLogo from "./icons/HandyTextLogo";
 import { GeneralSettings } from "./settings/general/GeneralSettings";
+import { AboutSettings } from "./settings/about/AboutSettings";
+import { RecordingsHistory } from "./settings/recordings/RecordingsHistory";
 
-export type SidebarSection = "general" | "about";
+export type SidebarSection = "general" | "recordings" | "about";
 
 interface SectionConfig {
   label: string;
@@ -17,17 +19,15 @@ export const SECTIONS_CONFIG: Record<SidebarSection, SectionConfig> = {
     icon: Mic,
     component: GeneralSettings,
   },
+  recordings: {
+    label: "Recordings",
+    icon: History,
+    component: RecordingsHistory,
+  },
   about: {
     label: "About",
     icon: Info,
-    component: () => (
-      <div className="p-4">
-        <h1 className="text-2xl font-bold">About Crispy</h1>
-        <p className="mt-2 text-sm text-mid-gray">
-          A noise suppression application.
-        </p>
-      </div>
-    ),
+    component: AboutSettings,
   },
 };
 
