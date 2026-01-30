@@ -1,6 +1,6 @@
 import React from "react";
 import { Mic, Info, History, Settings } from "lucide-react";
-import HandyTextLogo from "./icons/HandyTextLogo";
+import CrispyTextLogo from "./icons/CrispyTextLogo";
 import { GeneralSettings } from "./settings/general/GeneralSettings";
 import { AboutSettings } from "./settings/about/AboutSettings";
 import { RecordingsHistory } from "./settings/recordings/RecordingsHistory";
@@ -49,7 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div className="flex flex-col w-40 h-full border-r border-mid-gray/20 items-center px-2 bg-background">
       <div className="py-4">
-        <HandyTextLogo width={100} />
+        <CrispyTextLogo width={130} />
       </div>
       <div className="flex flex-col w-full items-center gap-1 pt-2 border-t border-mid-gray/20">
         {(Object.entries(SECTIONS_CONFIG) as [SidebarSection, SectionConfig][]).map(

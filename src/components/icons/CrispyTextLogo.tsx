@@ -1,12 +1,12 @@
 import React from "react";
 
-interface HandyTextLogoProps {
+interface CrispyTextLogoProps {
   width?: number | string;
   className?: string;
   [key: string]: any;
 }
 
-const HandyTextLogo: React.FC<HandyTextLogoProps> = ({
+const CrispyTextLogo: React.FC<CrispyTextLogoProps> = ({
   width = 100,
   className = "",
   ...props
@@ -26,9 +26,9 @@ const HandyTextLogo: React.FC<HandyTextLogoProps> = ({
         dominantBaseline="middle"
         textAnchor="middle"
         fill="currentColor"
-        fontSize="20"
-        fontWeight="bold"
-        fontFamily="sans-serif"
+        fontSize="24"
+        fontWeight="900"
+        fontFamily="Outfit, system-ui, sans-serif"
       >
         CRISPY
       </text>
@@ -36,4 +36,4 @@ const HandyTextLogo: React.FC<HandyTextLogoProps> = ({
   );
 };
 
-export default HandyTextLogo;
+export default CrispyTextLogo;

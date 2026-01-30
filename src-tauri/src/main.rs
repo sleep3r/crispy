@@ -8,7 +8,10 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use base64::Engine;
-use tauri::Emitter;
+use tauri::image::Image;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Emitter, Manager};
 use recording::{RecordingState, RecordableApp};
 
 #[derive(serde::Serialize)]
@@ -937,6 +940,15 @@ fn start_recording_worker(
     })
 }
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -947,6 +959,51 @@ fn main() {
                 shared: None,
             })),
             recording: Arc::new(Mutex::new(RecordingState::new())),
+        })
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            let (open_accel, quit_accel) = (Some("Cmd+,"), Some("Cmd+Q"));
+            #[cfg(not(target_os = "macos"))]
+            let (open_accel, quit_accel) = (Some("Ctrl+,"), Some("Ctrl+Q"));
+
+            let version = env!("CARGO_PKG_VERSION");
+            let version_label = format!("Crispy v{version}");
+            let version_i = MenuItem::with_id(app, "version", &version_label, false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+            let open_i =
+                MenuItem::with_id(app, "open", "Open…", true, open_accel).map_err(|e| e.to_string())?;
+            let quit_i =
+                MenuItem::with_id(app, "quit", "Quit", true, quit_accel).map_err(|e| e.to_string())?;
+            let sep = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+
+            let menu = Menu::with_items(
+                app,
+                &[&version_i, &sep, &open_i, &sep, &quit_i],
+            )
+            .map_err(|e| e.to_string())?;
+
+            let icon = app
+                .path()
+                .resolve("resources/tray.png", tauri::path::BaseDirectory::Resource)
+                .ok()
+                .and_then(|p| Image::from_path(p).ok())
+                .or_else(|| app.default_window_icon().cloned());
+            let icon = icon.expect("tray icon: run scripts/tray_icon.py or provide default icon");
+            let tray = TrayIconBuilder::new()
+                .icon(icon)
+                .menu(&menu)
+                .menu_on_left_click(true)
+                .icon_as_template(true)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)
+                .map_err(|e| e.to_string())?;
+
+            app.manage(tray);
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_input_devices,
