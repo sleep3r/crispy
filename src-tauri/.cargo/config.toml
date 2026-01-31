@@ -1,5 +1,6 @@
 [env]
+# Only matters when building for macOS (e.g. on Mac or when CI passes --target *-apple-darwin).
 MACOSX_DEPLOYMENT_TARGET = "13.0"
 
-[build]
-target = "aarch64-apple-darwin"
+# Do not set [build] target here — it would force one triple for all platforms and break Linux/Windows.
+# Use `tauri build --target <triple>` or CI build-args when you need a specific target.
