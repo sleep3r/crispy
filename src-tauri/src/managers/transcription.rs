@@ -5,10 +5,9 @@ use anyhow::Result;
 use hound::WavReader;
 use log::{debug, info};
 use rubato::{FftFixedIn, Resampler};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::AppHandle;
-use tauri::Manager;
 use transcribe_rs::{
     engines::{
         moonshine::{ModelVariant, MoonshineEngine, MoonshineModelParams},
@@ -184,14 +183,20 @@ impl TranscriptionManager {
     }
 }
 
-/// Store transcription result by recording path. Uses a hash of path as filename.
-pub fn transcription_result_path(app: &AppHandle, recording_path: &str) -> Result<std::path::PathBuf> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| anyhow::anyhow!("app data dir: {}", e))?
-        .join("transcriptions");
+/// Base directory for transcriptions: ~/Documents/Crispy/Transcriptions (next to Recordings and settings).
+fn transcriptions_dir() -> Result<PathBuf> {
+    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
+    let dir = PathBuf::from(home)
+        .join("Documents")
+        .join("Crispy")
+        .join("Transcriptions");
     std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// Store transcription result by recording path. Uses a hash of path as filename.
+pub fn transcription_result_path(_app: &AppHandle, recording_path: &str) -> Result<PathBuf> {
+    let dir = transcriptions_dir()?;
     let name = transcription_file_stem(recording_path);
     Ok(dir.join(format!("{}.txt", name)))
 }
@@ -205,28 +210,18 @@ fn transcription_file_stem(recording_path: &str) -> String {
 }
 
 /// Path to metadata file (model_id) for a transcription. Same stem as .txt but .meta.
-pub fn transcription_metadata_path(app: &AppHandle, recording_path: &str) -> Result<std::path::PathBuf> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| anyhow::anyhow!("app data dir: {}", e))?
-        .join("transcriptions");
-    std::fs::create_dir_all(&dir)?;
+pub fn transcription_metadata_path(_app: &AppHandle, recording_path: &str) -> Result<PathBuf> {
+    let dir = transcriptions_dir()?;
     let name = transcription_file_stem(recording_path);
     Ok(dir.join(format!("{}.meta", name)))
 }
 
 /// Path to chat history file for a transcription. Same stem as .txt but .chat.json.
 pub fn transcription_chat_history_path(
-    app: &AppHandle,
+    _app: &AppHandle,
     recording_path: &str,
-) -> Result<std::path::PathBuf> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| anyhow::anyhow!("app data dir: {}", e))?
-        .join("transcriptions");
-    std::fs::create_dir_all(&dir)?;
+) -> Result<PathBuf> {
+    let dir = transcriptions_dir()?;
     let name = transcription_file_stem(recording_path);
     Ok(dir.join(format!("{}.chat.json", name)))
 }

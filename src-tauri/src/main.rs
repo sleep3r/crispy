@@ -6,6 +6,9 @@ mod managers;
 mod recording;
 mod llm_settings;
 
+#[cfg(target_os = "macos")]
+mod system_input_volume;
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -724,6 +727,32 @@ fn set_monitoring_model(
     Ok(())
 }
 
+/// Get system default input device volume (0..100). macOS only; same as System Settings → Sound → Input.
+#[tauri::command]
+fn get_system_input_volume() -> Result<u8, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let v = system_input_volume::get_system_input_volume()?;
+        Ok((v * 100.0).round() as u8)
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("System input volume is only supported on macOS.".to_string())
+}
+
+/// Set system default input device volume (0..100). macOS only.
+#[tauri::command]
+fn set_system_input_volume(volume: u8) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let v = (volume.min(100) as f32) / 100.0;
+        system_input_volume::set_system_input_volume(v)
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = volume;
+    #[cfg(not(target_os = "macos"))]
+    Err("System input volume is only supported on macOS.".to_string())
+}
+
 #[derive(serde::Serialize)]
 struct BlackHoleStatus {
     installed: bool,
@@ -1202,10 +1231,33 @@ fn quit_app(app: tauri::AppHandle) {
 }
 
 fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    fn set_tray_window_level(window: &tauri::WebviewWindow) {
+        if let Ok(raw_ptr) = window.ns_window() {
+            if raw_ptr.is_null() {
+                return;
+            }
+            let ns_window: *mut objc2_app_kit::NSWindow = raw_ptr.cast();
+            unsafe {
+                // Use CGShieldingWindowLevel (2147483630) - highest level that works with fullscreen
+                // This is higher than screensaver (1000) and should appear over fullscreen apps
+                const CG_SHIELDING_WINDOW_LEVEL: isize = 2147483630;
+                (*ns_window).setLevel(CG_SHIELDING_WINDOW_LEVEL);
+                (*ns_window).makeKeyAndOrderFront(None);
+            }
+        }
+    }
+
     if let Some(window) = app.get_webview_window("tray-popup") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
+            let _ = window.set_always_on_top(true);
+            #[cfg(target_os = "macos")]
+            {
+                set_tray_window_level(&window);
+                let _ = window.set_visible_on_all_workspaces(true);
+            }
             let _ = window.show();
             let _ = window.set_focus();
             let _ = window.move_window(Position::TrayBottomCenter);
@@ -1215,11 +1267,17 @@ fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
     let url = WebviewUrl::App("index.html".into());
     let _ = WebviewWindowBuilder::new(app, "tray-popup", url)
         .title("Crispy")
-        .inner_size(260.0, 220.0)
+        .inner_size(260.0, 280.0)
         .decorations(false)
         .resizable(false)
         .build();
     if let Some(window) = app.get_webview_window("tray-popup") {
+        let _ = window.set_always_on_top(true);
+        #[cfg(target_os = "macos")]
+        {
+            set_tray_window_level(&window);
+            let _ = window.set_visible_on_all_workspaces(true);
+        }
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.move_window(Position::TrayBottomCenter);
@@ -1295,18 +1353,27 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Main window: hide to tray instead of closing (app keeps running)
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
-                    #[cfg(target_os = "macos")]
-                    {
-                        let _ = window.app_handle().set_activation_policy(
-                            tauri::ActivationPolicy::Accessory,
-                        );
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    // Main window: hide to tray instead of closing (app keeps running)
+                    if window.label() == "main" {
+                        api.prevent_close();
+                        let _ = window.hide();
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = window.app_handle().set_activation_policy(
+                                tauri::ActivationPolicy::Accessory,
+                            );
+                        }
                     }
                 }
+                tauri::WindowEvent::Focused(false) => {
+                    // Tray popup: close on outside click / focus loss
+                    if window.label() == "tray-popup" {
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1317,6 +1384,8 @@ fn main() {
             stop_monitoring,
             set_monitoring_volume,
             set_monitoring_model,
+            get_system_input_volume,
+            set_system_input_volume,
             get_blackhole_status,
             get_recordable_apps,
             start_recording,
