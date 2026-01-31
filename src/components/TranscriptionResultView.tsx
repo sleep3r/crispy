@@ -23,6 +23,7 @@ export const TranscriptionResultView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
+  const [llmModelName, setLlmModelName] = useState<string>("Assistant");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recordingPathRef = useRef<string | null>(null);
 
@@ -42,22 +43,26 @@ export const TranscriptionResultView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [text, modelId, history] = await Promise.all([
+      const [text, modelId, history, llm] = await Promise.all([
         invoke<string | null>("get_transcription_result", { recordingPath: path }),
         invoke<string | null>("get_transcription_model", { recordingPath: path }),
         invoke<{ role: string; content: string }[]>("get_transcription_chat_history", {
           recordingPath: path,
         }),
+        invoke<{ model: string }>("get_llm_settings"),
       ]);
       let modelName = "Transcription";
       if (modelId && modelId !== "none") {
         const info = await invoke<{ name: string } | null>("get_model_info", { modelId });
         if (info?.name) modelName = info.name;
       }
+      const assistantName = llm?.model?.trim() || "Assistant";
+      setLlmModelName(assistantName);
       const content = text ?? "";
       const historyMessages: ChatMessage[] = (history || []).map((m) => ({
         role: m.role === "user" ? "user" : "bot",
         content: m.content,
+        name: m.role === "assistant" ? assistantName : undefined,
       }));
       setMessages([
         {
@@ -168,6 +173,7 @@ export const TranscriptionResultView: React.FC = () => {
     const botMsg: ChatMessage = {
       role: "bot",
       content: "",
+      name: llmModelName,
       chatId,
       streaming: true,
     };
