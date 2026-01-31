@@ -947,12 +947,19 @@ fn start_recording_worker(
                 }
             } // mic_buf lock dropped here
 
-            // --- Pull app frame (or silence) ---
-            {
+            // --- Pull app frame (or mirror mic when app audio missing) ---
+            let app_available = {
+                let app_buf = app_buffer.lock().unwrap();
+                app_buf.len()
+            };
+            if app_available >= frame_size {
                 let mut app_buf = app_buffer.lock().unwrap();
                 for i in 0..frame_size {
                     right_frame[i] = app_buf.pop_front().unwrap_or(0.0);
                 }
+            } else {
+                // No app audio yet; record mic in both channels for stereo
+                right_frame.copy_from_slice(&left_frame);
             } // app_buf lock dropped here
 
             // --- Write to WAV ---
