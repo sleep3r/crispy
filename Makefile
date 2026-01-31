@@ -28,8 +28,12 @@ dev: ## Run application in development mode
 
 build: ## Build application for the current platform
 	@echo "$(BLUE)Building application...$(NC)"
-	npm run tauri build
-	@echo "$(GREEN)✅ Build complete. Result in src-tauri/target/release/$(NC)"
+	@unset CI && npm run tauri build
+	@echo "$(BLUE)Signing application...$(NC)"
+	@codesign --sign - --force --deep target/aarch64-apple-darwin/release/bundle/macos/Crispy.app
+	@echo "$(GREEN)✅ Build complete:$(NC)"
+	@echo "   • App: target/aarch64-apple-darwin/release/bundle/macos/Crispy.app"
+	@echo "   • DMG: target/aarch64-apple-darwin/release/bundle/dmg/Crispy_*.dmg"
 
 build-dev: ## Build application in development mode (debug)
 	@echo "$(BLUE)Building application (debug)...$(NC)"

@@ -93,7 +93,12 @@ Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy proce
    ```bash
    make build
    ```
-   The app bundle will be in `src-tauri/target/release/bundle/`
+   The app bundle will be in `target/aarch64-apple-darwin/release/bundle/`
+   
+   > **Note**: If you get `invalid value '1' for '--ci'` error, unset the CI variable:
+   > ```bash
+   > unset CI && make build
+   > ```
 
 ### First-Time Setup
 
@@ -141,6 +146,19 @@ Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy proce
 - System tray with webview popup
 - Window positioning via `tauri-plugin-positioner`
 - Native permissions (Microphone, Screen Recording)
+
+## 📦 Installation for Users
+
+See detailed installation instructions: **[INSTALL.md](./INSTALL.md)**
+
+**Quick start:**
+1. Download `Crispy.app` and move to `/Applications/`
+2. **Right-click** on the icon → **Open** (not double-click!)
+3. Confirm opening in the dialog
+
+This bypasses macOS Gatekeeper for unsigned apps. After the first launch, you can open normally.
+
+---
 
 ## 📖 Usage Guide
 
