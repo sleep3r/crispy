@@ -1,0 +1,5 @@
+[env]
+MACOSX_DEPLOYMENT_TARGET = "13.0"
+
+[build]
+target = "aarch64-apple-darwin"

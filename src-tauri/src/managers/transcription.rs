@@ -101,10 +101,6 @@ impl TranscriptionManager {
         }
     }
 
-    pub fn is_model_loaded(&self) -> bool {
-        self.engine.lock().unwrap().is_some()
-    }
-
     pub fn get_current_model(&self) -> Option<String> {
         self.current_model_id.lock().unwrap().clone()
     }
