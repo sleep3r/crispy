@@ -5,6 +5,30 @@ use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use screencapturekit::stream::sc_stream::SCStream;
 
+/// Resample audio from one sample rate to another using linear interpolation
+fn resample_audio(input: &[f32], input_rate: usize, output_rate: usize) -> Vec<f32> {
+    if input.is_empty() || input_rate == output_rate {
+        return input.to_vec();
+    }
+    
+    let ratio = input_rate as f64 / output_rate as f64;
+    let output_len = (input.len() as f64 / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(output_len);
+    
+    for i in 0..output_len {
+        let src_idx = i as f64 * ratio;
+        let idx0 = src_idx.floor() as usize;
+        let idx1 = (idx0 + 1).min(input.len() - 1);
+        let frac = src_idx - idx0 as f64;
+        
+        // Linear interpolation
+        let sample = input[idx0] * (1.0 - frac as f32) + input[idx1] * frac as f32;
+        output.push(sample);
+    }
+    
+    output
+}
+
 pub const SAMPLE_RATE: usize = 48000;
 pub const CHANNELS: usize = 2; // Stereo
 
@@ -194,6 +218,7 @@ pub fn start_app_audio_capture(
     // Create stream with audio handler
     struct AudioHandler {
         buffer: Arc<Mutex<VecDeque<f32>>>,
+        detected_sample_rate: Arc<Mutex<Option<usize>>>,
     }
     
     impl SCStreamOutputTrait for AudioHandler {
@@ -205,42 +230,119 @@ pub fn start_app_audio_capture(
             // Extract audio samples from CMSampleBuffer
             if let Some(audio_buffer_list) = sample.audio_buffer_list() {
                 let num_buffers = audio_buffer_list.num_buffers();
-                
-                for i in 0..num_buffers {
-                    if let Some(audio_buffer) = audio_buffer_list.buffer(i) {
-                        let data = audio_buffer.data();
-                        let num_channels = audio_buffer_list.get(i)
-                            .map(|b| b.number_channels)
-                            .unwrap_or(1);
-                        
-                        // Convert PCM data to f32 samples
-                        // Audio is typically in f32 format from ScreenCaptureKit
-                        let samples = unsafe {
-                            std::slice::from_raw_parts(
-                                data.as_ptr() as *const f32,
-                                data.len() / std::mem::size_of::<f32>(),
-                            )
-                        };
-                        
-                        // If stereo, downmix to mono; if mono, use as-is
-                        let mut buffer = self.buffer.lock().unwrap();
-                        if num_channels == 2 {
-                            for chunk in samples.chunks(2) {
-                                let mono = (chunk[0] + chunk[1]) / 2.0;
-                                if buffer.len() >= SAMPLE_RATE * 10 {
-                                    buffer.pop_front();
-                                }
-                                buffer.push_back(mono);
+                if num_buffers == 0 {
+                    return;
+                }
+
+                let mono_samples: Option<Vec<f32>> = if num_buffers >= 2 {
+                    let Some(left) = audio_buffer_list.buffer(0) else {
+                        return;
+                    };
+                    let Some(right) = audio_buffer_list.buffer(1) else {
+                        return;
+                    };
+
+                    let left_samples = unsafe {
+                        std::slice::from_raw_parts(
+                            left.data().as_ptr() as *const f32,
+                            left.data().len() / std::mem::size_of::<f32>(),
+                        )
+                    };
+                    let right_samples = unsafe {
+                        std::slice::from_raw_parts(
+                            right.data().as_ptr() as *const f32,
+                            right.data().len() / std::mem::size_of::<f32>(),
+                        )
+                    };
+
+                    let len = left_samples.len().min(right_samples.len());
+                    Some(
+                        (0..len)
+                            .map(|i| (left_samples[i] + right_samples[i]) / 2.0)
+                            .collect(),
+                    )
+                } else {
+                    let Some(audio_buffer) = audio_buffer_list.buffer(0) else {
+                        return;
+                    };
+                    let num_channels = audio_buffer_list
+                        .get(0)
+                        .map(|b| b.number_channels as usize)
+                        .unwrap_or(1);
+
+                    let samples = unsafe {
+                        std::slice::from_raw_parts(
+                            audio_buffer.data().as_ptr() as *const f32,
+                            audio_buffer.data().len() / std::mem::size_of::<f32>(),
+                        )
+                    };
+
+                    if num_channels >= 2 {
+                        Some(
+                            samples
+                                .chunks(num_channels)
+                                .map(|chunk| {
+                                    let mut sum = 0.0;
+                                    for &s in chunk {
+                                        sum += s;
+                                    }
+                                    sum / num_channels as f32
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        Some(samples.to_vec())
+                    }
+                };
+
+                let Some(mono_samples) = mono_samples else {
+                    return;
+                };
+
+                let actual_sample_rate = {
+                    let mut guard = self.detected_sample_rate.lock().unwrap();
+                    if let Some(rate) = *guard {
+                        rate
+                    } else {
+                        let duration = sample.duration();
+                        let num_samples = mono_samples.len();
+                        let computed = if duration.value > 0 && duration.timescale > 0 {
+                            let duration_secs =
+                                duration.value as f64 / duration.timescale as f64;
+                            if duration_secs > 0.0 {
+                                (num_samples as f64 / duration_secs).round() as usize
+                            } else {
+                                44100
                             }
                         } else {
-                            for &sample in samples {
-                                if buffer.len() >= SAMPLE_RATE * 10 {
-                                    buffer.pop_front();
-                                }
-                                buffer.push_back(sample);
-                            }
-                        }
+                            44100
+                        };
+
+                        let rate = if computed.abs_diff(48000) < 200 {
+                            48000
+                        } else if computed.abs_diff(44100) < 200 {
+                            44100
+                        } else {
+                            44100
+                        };
+                        *guard = Some(rate);
+                        rate
                     }
+                };
+
+                let final_samples = if actual_sample_rate != SAMPLE_RATE {
+                    resample_audio(&mono_samples, actual_sample_rate, SAMPLE_RATE)
+                } else {
+                    mono_samples
+                };
+
+                // Push to buffer
+                let mut buffer = self.buffer.lock().unwrap();
+                for sample in final_samples {
+                    if buffer.len() >= SAMPLE_RATE * 10 {
+                        buffer.pop_front();
+                    }
+                    buffer.push_back(sample);
                 }
             }
         }
@@ -248,6 +350,7 @@ pub fn start_app_audio_capture(
     
     let handler = AudioHandler {
         buffer: app_buffer,
+        detected_sample_rate: Arc::new(Mutex::new(None)),
     };
     
     let mut stream = SCStream::new(&filter, &config);

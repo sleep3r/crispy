@@ -666,6 +666,8 @@ fn do_stop_recording(state: &AppState) -> Result<String, String> {
     {
         let recording = state.recording.lock().unwrap();
         let stream_opt = recording.app_audio_stream.lock().unwrap().take();
+        // Clear app buffer to avoid trailing audio after stop
+        recording.app_buffer.lock().unwrap().clear();
         drop(recording);
         if let Some(stream) = stream_opt {
             let _ = stream.stop_capture();

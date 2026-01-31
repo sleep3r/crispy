@@ -66,18 +66,54 @@ impl Default for SettingsFile {
     }
 }
 
-fn settings_file_path(app: &AppHandle) -> Result<PathBuf> {
+fn settings_file_path(_app: &AppHandle) -> Result<PathBuf> {
+    let home = std::env::var("HOME")
+        .map_err(|_| anyhow::anyhow!("Cannot find home directory"))?;
+    let dir = PathBuf::from(home)
+        .join("Documents")
+        .join("Crispy");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("settings.json"))
+}
+
+fn legacy_settings_file_path(app: &AppHandle) -> Result<PathBuf> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| anyhow::anyhow!("app data dir: {}", e))?;
-    std::fs::create_dir_all(&dir)?;
     Ok(dir.join("settings.json"))
 }
 
 fn load_settings_file(app: &AppHandle) -> Result<SettingsFile> {
     let path = settings_file_path(app)?;
     if !path.exists() {
+        // Try legacy location for automatic migration
+        if let Ok(legacy_path) = legacy_settings_file_path(app) {
+            if legacy_path.exists() {
+                if let Ok(contents) = std::fs::read_to_string(&legacy_path) {
+                    if let Ok(settings) = serde_json::from_str::<SettingsFile>(&contents) {
+                        let _ = save_settings_file(app, &settings);
+                        return Ok(settings);
+                    }
+                    if let Ok(llm_only) = serde_json::from_str::<LlmSettings>(&contents) {
+                        let settings = SettingsFile {
+                            llm: llm_only,
+                            app: AppSettings::default(),
+                        };
+                        let _ = save_settings_file(app, &settings);
+                        return Ok(settings);
+                    }
+                    if let Ok(app_only) = serde_json::from_str::<AppSettings>(&contents) {
+                        let settings = SettingsFile {
+                            llm: LlmSettings::default(),
+                            app: app_only,
+                        };
+                        let _ = save_settings_file(app, &settings);
+                        return Ok(settings);
+                    }
+                }
+            }
+        }
         return Ok(SettingsFile::default());
     }
     let contents = std::fs::read_to_string(&path)?;
