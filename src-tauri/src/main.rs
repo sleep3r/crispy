@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use base64::Engine;
+use nnnoiseless::{DenoiseState, FRAME_SIZE as RNNOISE_FRAME_SIZE};
 use tauri::image::Image;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -31,7 +32,9 @@ struct AppState {
 struct AudioMonitorState {
     input_stream: Option<cpal::Stream>,
     output_stream: Option<cpal::Stream>,
-    shared: Option<Arc<Mutex<SharedAudio>>>,
+    shared: Option<Arc<Mutex<NsState>>>,
+    last_input_rate: Option<f32>,
+    last_output_rate: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -75,11 +78,23 @@ impl SharedAudio {
         }
     }
 
-    fn push_sample(&mut self, sample: f32) {
+    /// Pushes one input sample; returns processed sample(s) for recording when applicable.
+    fn push_sample(&mut self, sample: f32) -> Option<Vec<f32>> {
         if self.buffer.len() >= self.max_len {
             self.buffer.pop_front();
         }
         self.buffer.push_back(sample);
+
+        let mut processed = sample * self.volume;
+        if let ModelKind::Noisy = self.model {
+            self.rng_state = self
+                .rng_state
+                .wrapping_mul(1_664_525)
+                .wrapping_add(1_013_904_223);
+            let noise = (self.rng_state as f32 / u32::MAX as f32) * 2.0 - 1.0;
+            processed += noise * 0.05;
+        }
+        Some(vec![processed])
     }
 
     fn next_sample(&mut self) -> f32 {
@@ -113,6 +128,130 @@ impl SharedAudio {
 
         self.resample_pos += step;
         sample * self.volume
+    }
+}
+
+/// RNNoise-based processor: frame-based (480 samples at 48 kHz). Expects 48 kHz input.
+struct RnnNoiseProcessor {
+    denoise: Box<DenoiseState<'static>>,
+    input_buf: VecDeque<f32>,
+    output_buf: VecDeque<f32>,
+    resample_pos: f64,
+    input_rate: f32,
+    output_rate: f32,
+    volume: f32,
+    first_frame: bool,
+    max_output_len: usize,
+}
+
+impl RnnNoiseProcessor {
+    fn new(input_rate: f32, output_rate: f32, volume: f32) -> Self {
+        let max_output_len = input_rate as usize;
+        Self {
+            denoise: DenoiseState::new(),
+            input_buf: VecDeque::with_capacity(RNNOISE_FRAME_SIZE * 2),
+            output_buf: VecDeque::with_capacity(max_output_len),
+            resample_pos: 0.0,
+            input_rate,
+            output_rate,
+            volume: volume.clamp(0.0, 1.0),
+            first_frame: true,
+            max_output_len,
+        }
+    }
+
+    /// Pushes one sample ([-1, 1]); when a full frame is ready, returns 480 processed samples for recording.
+    fn push_sample(&mut self, sample: f32) -> Option<Vec<f32>> {
+        if self.input_buf.len() >= self.max_output_len {
+            self.input_buf.pop_front();
+        }
+        self.input_buf.push_back(sample);
+
+        if self.input_buf.len() < RNNOISE_FRAME_SIZE {
+            return None;
+        }
+
+        let mut input_frame = [0.0f32; 480];
+        for (i, s) in self.input_buf.drain(..RNNOISE_FRAME_SIZE).enumerate() {
+            if i < RNNOISE_FRAME_SIZE {
+                input_frame[i] = s * 32768.0;
+            }
+        }
+        let mut output_frame = [0.0f32; 480];
+        self.denoise.process_frame(&mut output_frame[..], &input_frame[..]);
+
+        let out_samples: Vec<f32> = output_frame
+            .iter()
+            .map(|&s| (s / 32768.0).clamp(-1.0, 1.0) * self.volume)
+            .collect();
+
+        if self.first_frame {
+            self.first_frame = false;
+            return None;
+        }
+
+        for &out in &out_samples {
+            if self.output_buf.len() >= self.max_output_len {
+                self.output_buf.pop_front();
+            }
+            self.output_buf.push_back(out);
+        }
+        Some(out_samples)
+    }
+
+    fn next_sample(&mut self) -> f32 {
+        if self.output_buf.len() < 2 {
+            return 0.0;
+        }
+        let step = self.input_rate as f64 / self.output_rate as f64;
+        while self.resample_pos >= 1.0 {
+            self.output_buf.pop_front();
+            self.resample_pos -= 1.0;
+            if self.output_buf.len() < 2 {
+                return 0.0;
+            }
+        }
+        let s0 = *self.output_buf.get(0).unwrap_or(&0.0);
+        let s1 = *self.output_buf.get(1).unwrap_or(&0.0);
+        let frac = self.resample_pos as f32;
+        self.resample_pos += step;
+        s0 + (s1 - s0) * frac
+    }
+}
+
+enum NsState {
+    Legacy(SharedAudio),
+    RnnNoise(RnnNoiseProcessor),
+}
+
+impl NsState {
+    fn push_sample(&mut self, sample: f32) -> Option<Vec<f32>> {
+        match self {
+            NsState::Legacy(s) => s.push_sample(sample),
+            NsState::RnnNoise(s) => s.push_sample(sample),
+        }
+    }
+
+    fn next_sample(&mut self) -> f32 {
+        match self {
+            NsState::Legacy(s) => s.next_sample(),
+            NsState::RnnNoise(s) => s.next_sample(),
+        }
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        let v = volume.clamp(0.0, 1.0);
+        match self {
+            NsState::Legacy(s) => s.volume = v,
+            NsState::RnnNoise(s) => s.volume = v,
+        }
+    }
+
+    fn volume(&self) -> f32 {
+        match self {
+            NsState::Legacy(s) => s.volume,
+            NsState::RnnNoise(s) => s.volume,
+        }
     }
 }
 
@@ -263,13 +402,21 @@ fn start_monitoring(
             (None, None, None, None)
         };
 
-    let shared: Option<Arc<Mutex<SharedAudio>>> = if let Some(ref output_config) = output_config {
-        Some(Arc::new(Mutex::new(SharedAudio::new(
-            config.sample_rate() as f32,
-            output_config.sample_rate() as f32,
-            ModelKind::from_name(&model_name),
-            volume.clamp(0.0, 1.0),
-        ))))
+    let shared: Option<Arc<Mutex<NsState>>> = if let Some(ref output_config) = output_config {
+        let input_rate = config.sample_rate() as f32;
+        let output_rate = output_config.sample_rate() as f32;
+        let vol = volume.clamp(0.0, 1.0);
+        let ns = if model_name == "rnnnoise" && (input_rate - 48000.0).abs() < 1.0 {
+            NsState::RnnNoise(RnnNoiseProcessor::new(input_rate, output_rate, vol))
+        } else {
+            NsState::Legacy(SharedAudio::new(
+                input_rate,
+                output_rate,
+                ModelKind::from_name(&model_name),
+                vol,
+            ))
+        };
+        Some(Arc::new(Mutex::new(ns)))
     } else {
         None
     };
@@ -295,28 +442,25 @@ fn start_monitoring(
                         }
                         let mono = acc / input_channels as f32;
                         
-                        // Apply model processing for recording
-                        let processed = if let Some(shared) = shared.as_ref() {
+                        // Apply model and tee to recording buffer
+                        if let Some(shared) = shared.as_ref() {
                             let mut s = shared.lock().unwrap();
-                            s.push_sample(mono);
-                            // Get processed version for recording
-                            let mut temp_sample = mono * s.volume;
-                            if let ModelKind::Noisy = s.model {
-                                s.rng_state = s.rng_state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                                let noise = (s.rng_state as f32 / u32::MAX as f32) * 2.0 - 1.0;
-                                temp_sample += noise * 0.05;
+                            if let Some(samples) = s.push_sample(mono) {
+                                let mut rec_buf = rec_buffer.lock().unwrap();
+                                for sample in samples {
+                                    if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                                        rec_buf.pop_front();
+                                    }
+                                    rec_buf.push_back(sample);
+                                }
                             }
-                            temp_sample
                         } else {
-                            mono
-                        };
-                        
-                        // Tee to recording buffer
-                        let mut rec_buf = rec_buffer.lock().unwrap();
-                        if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-                            rec_buf.pop_front();
+                            let mut rec_buf = rec_buffer.lock().unwrap();
+                            if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                                rec_buf.pop_front();
+                            }
+                            rec_buf.push_back(mono);
                         }
-                        rec_buf.push_back(processed);
                         
                         sum += mono * mono;
                         frames += 1.0;
@@ -353,25 +497,24 @@ fn start_monitoring(
                         }
                         let mono = acc / input_channels as f32;
                         
-                        let processed = if let Some(shared) = shared.as_ref() {
+                        if let Some(shared) = shared.as_ref() {
                             let mut s = shared.lock().unwrap();
-                            s.push_sample(mono);
-                            let mut temp_sample = mono * s.volume;
-                            if let ModelKind::Noisy = s.model {
-                                s.rng_state = s.rng_state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                                let noise = (s.rng_state as f32 / u32::MAX as f32) * 2.0 - 1.0;
-                                temp_sample += noise * 0.05;
+                            if let Some(samples) = s.push_sample(mono) {
+                                let mut rec_buf = rec_buffer.lock().unwrap();
+                                for sample in samples {
+                                    if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                                        rec_buf.pop_front();
+                                    }
+                                    rec_buf.push_back(sample);
+                                }
                             }
-                            temp_sample
                         } else {
-                            mono
-                        };
-                        
-                        let mut rec_buf = rec_buffer.lock().unwrap();
-                        if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-                            rec_buf.pop_front();
+                            let mut rec_buf = rec_buffer.lock().unwrap();
+                            if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                                rec_buf.pop_front();
+                            }
+                            rec_buf.push_back(mono);
                         }
-                        rec_buf.push_back(processed);
                         
                         sum += mono * mono;
                         frames += 1.0;
@@ -408,25 +551,24 @@ fn start_monitoring(
                         }
                         let mono = acc / input_channels as f32;
                         
-                        let processed = if let Some(shared) = shared.as_ref() {
+                        if let Some(shared) = shared.as_ref() {
                             let mut s = shared.lock().unwrap();
-                            s.push_sample(mono);
-                            let mut temp_sample = mono * s.volume;
-                            if let ModelKind::Noisy = s.model {
-                                s.rng_state = s.rng_state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                                let noise = (s.rng_state as f32 / u32::MAX as f32) * 2.0 - 1.0;
-                                temp_sample += noise * 0.05;
+                            if let Some(samples) = s.push_sample(mono) {
+                                let mut rec_buf = rec_buffer.lock().unwrap();
+                                for sample in samples {
+                                    if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                                        rec_buf.pop_front();
+                                    }
+                                    rec_buf.push_back(sample);
+                                }
                             }
-                            temp_sample
                         } else {
-                            mono
-                        };
-                        
-                        let mut rec_buf = rec_buffer.lock().unwrap();
-                        if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-                            rec_buf.pop_front();
+                            let mut rec_buf = rec_buffer.lock().unwrap();
+                            if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                                rec_buf.pop_front();
+                            }
+                            rec_buf.push_back(mono);
                         }
-                        rec_buf.push_back(processed);
                         
                         sum += mono * mono;
                         frames += 1.0;
@@ -523,7 +665,11 @@ fn start_monitoring(
     let mut audio = state.audio.lock().unwrap();
     audio.input_stream = Some(input_stream);
     audio.output_stream = output_stream;
-    audio.shared = shared;
+    audio.shared = shared.clone();
+    audio.last_input_rate = Some(config.sample_rate() as f32);
+    audio.last_output_rate = output_config
+        .as_ref()
+        .map(|c| c.sample_rate() as f32);
 
     Ok(())
 }
@@ -545,7 +691,7 @@ fn set_monitoring_volume(
     let audio = state.audio.lock().unwrap();
     if let Some(shared) = audio.shared.as_ref() {
         let mut shared = shared.lock().unwrap();
-        shared.volume = volume.clamp(0.0, 1.0);
+        shared.set_volume(volume);
     }
     Ok(())
 }
@@ -556,10 +702,25 @@ fn set_monitoring_model(
     model_name: String,
 ) -> Result<(), String> {
     let audio = state.audio.lock().unwrap();
-    if let Some(shared) = audio.shared.as_ref() {
-        let mut shared = shared.lock().unwrap();
-        shared.model = ModelKind::from_name(&model_name);
-    }
+    let shared = audio.shared.as_ref().ok_or("Monitoring not started")?;
+    let (vol, input_rate, output_rate) = {
+        let guard = shared.lock().unwrap();
+        let v = guard.volume();
+        let ir = audio.last_input_rate.unwrap_or(48000.0);
+        let or = audio.last_output_rate.unwrap_or(48000.0);
+        (v, ir, or)
+    };
+    let mut guard = shared.lock().unwrap();
+    *guard = if model_name == "rnnnoise" && (input_rate - 48000.0).abs() < 1.0 {
+        NsState::RnnNoise(RnnNoiseProcessor::new(input_rate, output_rate, vol))
+    } else {
+        NsState::Legacy(SharedAudio::new(
+            input_rate,
+            output_rate,
+            ModelKind::from_name(&model_name),
+            vol,
+        ))
+    };
     Ok(())
 }
 
@@ -1074,6 +1235,8 @@ fn main() {
                 input_stream: None,
                 output_stream: None,
                 shared: None,
+                last_input_rate: None,
+                last_output_rate: None,
             })),
             recording: Arc::new(Mutex::new(RecordingState::new())),
         })
@@ -1169,6 +1332,7 @@ fn main() {
             delete_recording,
             read_recording_file,
             commands::models::get_available_models,
+            commands::ns_models::get_available_ns_models,
             commands::models::get_model_info,
             commands::models::download_model,
             commands::models::delete_model,

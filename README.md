@@ -25,8 +25,9 @@ Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy proce
 
 ## ✨ Features
 
-### 🎙️ AI Noise Suppression
-- **Real-time processing** with multiple model options (Whisper, Parakeet, Moonshine)
+### 🎙️ Noise Suppression
+- **RNN Noise** (nnnoiseless): real-time neural denoiser, 48 kHz, built-in model
+- **None / Test noise**: passthrough or debug mode
 - **Adaptive volume control** to maintain consistent levels
 - **Zero-latency monitoring** for immediate feedback
 - Routes clean audio to any application (Zoom, Discord, Teams, etc.)
@@ -106,7 +107,7 @@ Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy proce
 2. **Grant screen recording permissions** (required for app audio capture)
 3. **Select your microphone** in Settings → General
 4. **Select BlackHole 2ch** as output device (or any virtual audio device)
-5. **Choose a noise suppression model** in Settings → Models
+5. **Choose a noise suppression model** in the footer (General screen): None, Test noise, or RNN Noise (48 kHz mic recommended)
 6. **Optionally configure LLM** in Settings → LLM Chat (for transcription chat)
 
 ## 🏗️ How It Works
@@ -116,7 +117,7 @@ Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy proce
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐
 │  Microphone │ -> │ Noise Model  │ -> │  Monitor    │ -> │  BlackHole   │ -> Apps
-│  (Physical) │    │  (AI/Dummy)  │    │  + Record   │    │  (Virtual)   │    (Zoom, etc.)
+│  (Physical) │    │ RNNoise/None │    │  + Record   │    │  (Virtual)   │    (Zoom, etc.)
 └─────────────┘    └──────────────┘    └─────────────┘    └──────────────┘
                                               │
                                               v
@@ -136,8 +137,8 @@ Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy proce
 
 **Backend (Rust)**
 - **Audio**: CPAL (cross-platform audio), Hound (WAV I/O), Rubato (resampling)
-- **Noise Suppression**: transcribe-rs + ONNX Runtime
-- **Transcription**: Whisper, Parakeet, Moonshine models
+- **Noise Suppression**: [nnnoiseless](https://github.com/jneem/nnnoiseless) (RNNoise port, in `./rnnnoise`), frame-based 48 kHz
+- **Transcription**: transcribe-rs + ONNX Runtime (Whisper, Parakeet, Moonshine)
 - **App Audio Capture**: ScreenCaptureKit (macOS 12.3+)
 - **LLM Integration**: async-openai SDK for chat streaming
 - **Persistence**: JSON-based settings + metadata
@@ -206,10 +207,10 @@ crispy/
 │   └── main.tsx           # Entry point
 ├── src-tauri/             # Rust backend
 │   ├── src/
-│   │   ├── main.rs        # Tauri app setup, audio pipeline
+│   │   ├── main.rs        # Tauri app setup, audio pipeline, NS/TS models
 │   │   ├── recording.rs   # Recording logic, ScreenCaptureKit
-│   │   ├── commands/      # Tauri commands (API)
-│   │   └── managers/      # Model + transcription managers
+│   │   ├── commands/      # Tauri commands (models, ns_models, transcription, …)
+│   │   └── managers/      # Transcription + model managers
 │   ├── build.rs           # Build script (Swift linking)
 │   └── Cargo.toml         # Rust dependencies
 └── Makefile               # Build targets and commands
@@ -249,10 +250,10 @@ println!("Available devices: {:?}", devices);
 - [x] System tray with quick controls
 - [x] Settings persistence
 - [x] ScreenCaptureKit app audio capture
-- [ ] Multi-language support
+- [x] RNN Noise as first real noise suppression model
 - [ ] Custom hotkeys
 - [ ] Windows/Linux support
-- [ ] Additional noise models
+- [ ] Additional noise suppression models
 - [ ] Audio effects (EQ, compressor)
 
 ## 🤝 Contributing

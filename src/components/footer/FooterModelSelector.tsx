@@ -1,8 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "../../hooks/useSettings";
 import { useTranscriptionModels } from "../../hooks/useTranscriptionModels";
 import { formatModelSize } from "../../lib/utils/format";
 import type { SidebarSection } from "../Sidebar";
+
+interface NsModelInfo {
+  id: string;
+  name: string;
+  description: string;
+}
 
 const getStatusMeta = (status: string, error: string | null) => {
   if (error) return { text: `Error: ${error}`, className: "text-red-500", dot: "bg-red-500" };
@@ -31,9 +38,10 @@ const getDownloadLabel = (
   return "Download";
 };
 
-const NOISE_MODELS = [
-  { id: "dummy", name: "None", description: "Not applied" },
-  { id: "noisy", name: "Noisy", description: "Adds noise to output" },
+const DEFAULT_NOISE_MODELS: NsModelInfo[] = [
+  { id: "dummy", name: "None", description: "No processing" },
+  { id: "noisy", name: "Test noise", description: "Adds test noise (debug)" },
+  { id: "rnnnoise", name: "RNN Noise", description: "RNNoise denoiser (48 kHz)" },
 ];
 
 interface FooterModelSelectorProps {
@@ -61,8 +69,17 @@ export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
     cancelDownload,
   } = useTranscriptionModels();
   const isNoise = currentSection === "general";
+  const [noiseModels, setNoiseModels] = useState<NsModelInfo[]>(DEFAULT_NOISE_MODELS);
 
-  const models = isNoise ? NOISE_MODELS : transcriptionModels;
+  useEffect(() => {
+    if (isNoise) {
+      invoke<NsModelInfo[]>("get_available_ns_models")
+        .then(setNoiseModels)
+        .catch(() => setNoiseModels(DEFAULT_NOISE_MODELS));
+    }
+  }, [isNoise]);
+
+  const models = isNoise ? noiseModels : transcriptionModels;
   const settingKey = isNoise ? "selected_model" : "selected_transcription_model";
   const selected = isNoise
     ? getSetting(settingKey) || "dummy"
