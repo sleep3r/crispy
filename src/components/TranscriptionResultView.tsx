@@ -276,13 +276,15 @@ export const TranscriptionResultView: React.FC = () => {
               {msg.name && (
                 <span className="text-xs font-medium text-mid-gray mb-1">{msg.name}</span>
               )}
-              <div className="relative rounded-lg rounded-tl-none bg-mid-gray/10 px-3 py-2 text-sm whitespace-pre-wrap break-words">
-                {msg.content || (msg.streaming && "...")}
+              <div className="relative rounded-lg rounded-tl-none bg-mid-gray/10 px-3 py-2 text-sm whitespace-pre-wrap break-words group">
+                <div className={msg.name ? "pr-7" : ""}>
+                  {msg.content || (msg.streaming && "...")}
+                </div>
                 {msg.name && (
                   <button
                     type="button"
                     onClick={() => handleCopy(msg.content, i)}
-                    className="absolute top-1 right-1 rounded-md p-1 text-mid-gray hover:text-text hover:bg-mid-gray/20 transition-colors"
+                    className="absolute top-1.5 right-1.5 rounded-md p-1 text-mid-gray/50 hover:text-text hover:bg-mid-gray/20 transition-all"
                     title="Copy message"
                   >
                     {copiedIndex === i ? <Check size={14} /> : <Copy size={14} />}
