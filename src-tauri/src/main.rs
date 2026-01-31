@@ -76,7 +76,12 @@ fn main() {
                         ..
                     } = event
                     {
-                        window::show_or_toggle_tray_popup(tray.app_handle());
+                        let app = tray.app_handle().clone();
+                        let app_for_closure = app.clone();
+                        // AppKit window ops must run on main thread (avoids "foreign exception" crash)
+                        let _ = app.run_on_main_thread(move || {
+                            window::show_or_toggle_tray_popup(&app_for_closure);
+                        });
                     }
                 })
                 .build(app)

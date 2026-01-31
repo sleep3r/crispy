@@ -1,18 +1,27 @@
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_positioner::{Position, WindowExt};
 
+/// Configure tray popup to appear over fullscreen Spaces (macOS).
+/// Must be called from the main thread (tray click handler uses run_on_main_thread).
 #[cfg(target_os = "macos")]
-fn set_tray_window_level(window: &tauri::WebviewWindow) {
-    if let Ok(raw_ptr) = window.ns_window() {
-        if raw_ptr.is_null() {
-            return;
-        }
-        let ns_window: *mut objc2_app_kit::NSWindow = raw_ptr.cast();
-        unsafe {
-            const CG_SHIELDING_WINDOW_LEVEL: isize = 2147483630;
-            (*ns_window).setLevel(CG_SHIELDING_WINDOW_LEVEL);
-            (*ns_window).makeKeyAndOrderFront(None);
-        }
+fn configure_popup_for_fullscreen(window: &tauri::WebviewWindow) {
+    let Ok(raw) = window.ns_window() else { return };
+    if raw.is_null() {
+        return;
+    }
+    let ns_window: *mut objc2_app_kit::NSWindow = raw.cast();
+    unsafe {
+        use objc2_app_kit::NSWindowCollectionBehavior as Beh;
+        // Allow window in fullscreen Spaces
+        // Note: CanJoinAllSpaces is mutually exclusive with MoveToActiveSpace
+        let behavior = Beh::CanJoinAllSpaces | Beh::FullScreenAuxiliary | Beh::Transient;
+        (*ns_window).setCollectionBehavior(behavior);
+        
+        // Popup-like level
+        (*ns_window).setLevel(objc2_app_kit::NSPopUpMenuWindowLevel);
+        
+        // Show without forcing key (reduces space switching / stealing focus)
+        (*ns_window).orderFrontRegardless();
     }
 }
 
@@ -43,11 +52,12 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
             let _ = window.set_always_on_top(true);
             #[cfg(target_os = "macos")]
             {
-                set_tray_window_level(&window);
                 let _ = window.set_visible_on_all_workspaces(true);
+                configure_popup_for_fullscreen(&window);
             }
             let _ = window.show();
-            let _ = window.set_focus();
+            // Don't force focus — reduces switching out of fullscreen
+            // let _ = window.set_focus();
             let _ = window.move_window(Position::TrayBottomCenter);
         }
         return;
@@ -65,11 +75,11 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
         let _ = window.set_always_on_top(true);
         #[cfg(target_os = "macos")]
         {
-            set_tray_window_level(&window);
             let _ = window.set_visible_on_all_workspaces(true);
+            configure_popup_for_fullscreen(&window);
         }
         let _ = window.show();
-        let _ = window.set_focus();
+        // let _ = window.set_focus();
         let _ = window.move_window(Position::TrayBottomCenter);
     }
 }
