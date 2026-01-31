@@ -1,0 +1,138 @@
+// LLM settings storage and retrieval
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use tauri::{AppHandle, Manager};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmSettings {
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+}
+
+impl Default for LlmSettings {
+    fn default() -> Self {
+        Self {
+            endpoint: "https://api.openai.com/v1".to_string(),
+            api_key: String::new(),
+            model: "gpt-4".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub selected_microphone: String,
+    pub selected_output_device: String,
+    pub microphone_volume: String,
+    pub selected_model: String,
+    pub selected_transcription_model: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            selected_microphone: String::new(),
+            selected_output_device: String::new(),
+            microphone_volume: "100".to_string(),
+            selected_model: "dummy".to_string(),
+            selected_transcription_model: "none".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmSettingsPublic {
+    pub endpoint: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsFile {
+    pub llm: LlmSettings,
+    pub app: AppSettings,
+}
+
+impl Default for SettingsFile {
+    fn default() -> Self {
+        Self {
+            llm: LlmSettings::default(),
+            app: AppSettings::default(),
+        }
+    }
+}
+
+fn settings_file_path(app: &AppHandle) -> Result<PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| anyhow::anyhow!("app data dir: {}", e))?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("settings.json"))
+}
+
+fn load_settings_file(app: &AppHandle) -> Result<SettingsFile> {
+    let path = settings_file_path(app)?;
+    if !path.exists() {
+        return Ok(SettingsFile::default());
+    }
+    let contents = std::fs::read_to_string(&path)?;
+    if let Ok(settings) = serde_json::from_str::<SettingsFile>(&contents) {
+        return Ok(settings);
+    }
+    if let Ok(llm_only) = serde_json::from_str::<LlmSettings>(&contents) {
+        return Ok(SettingsFile {
+            llm: llm_only,
+            app: AppSettings::default(),
+        });
+    }
+    if let Ok(app_only) = serde_json::from_str::<AppSettings>(&contents) {
+        return Ok(SettingsFile {
+            llm: LlmSettings::default(),
+            app: app_only,
+        });
+    }
+    Ok(SettingsFile::default())
+}
+
+fn save_settings_file(app: &AppHandle, settings: &SettingsFile) -> Result<()> {
+    let path = settings_file_path(app)?;
+    let json = serde_json::to_string_pretty(settings)?;
+    std::fs::write(&path, json)?;
+    Ok(())
+}
+
+pub fn load_llm_settings(app: &AppHandle) -> Result<LlmSettings> {
+    Ok(load_settings_file(app)?.llm)
+}
+
+pub fn save_llm_settings(app: &AppHandle, settings: &LlmSettings) -> Result<()> {
+    let mut file = load_settings_file(app)?;
+    file.llm = settings.clone();
+    save_settings_file(app, &file)
+}
+
+pub fn load_app_settings(app: &AppHandle) -> Result<AppSettings> {
+    Ok(load_settings_file(app)?.app)
+}
+
+pub fn save_app_settings(app: &AppHandle, settings: &AppSettings) -> Result<()> {
+    let mut file = load_settings_file(app)?;
+    file.app = settings.clone();
+    save_settings_file(app, &file)
+}
+
+pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<()> {
+    let mut settings = load_app_settings(app)?;
+    match key {
+        "selected_microphone" => settings.selected_microphone = value,
+        "selected_output_device" => settings.selected_output_device = value,
+        "microphone_volume" => settings.microphone_volume = value,
+        "selected_model" => settings.selected_model = value,
+        "selected_transcription_model" => settings.selected_transcription_model = value,
+        _ => return Err(anyhow::anyhow!("Unknown setting key: {}", key)),
+    }
+    save_app_settings(app, &settings)
+}

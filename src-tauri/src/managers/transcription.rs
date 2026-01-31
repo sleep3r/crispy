@@ -220,9 +220,30 @@ pub fn transcription_metadata_path(app: &AppHandle, recording_path: &str) -> Res
     Ok(dir.join(format!("{}.meta", name)))
 }
 
+/// Path to chat history file for a transcription. Same stem as .txt but .chat.json.
+pub fn transcription_chat_history_path(
+    app: &AppHandle,
+    recording_path: &str,
+) -> Result<std::path::PathBuf> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| anyhow::anyhow!("app data dir: {}", e))?
+        .join("transcriptions");
+    std::fs::create_dir_all(&dir)?;
+    let name = transcription_file_stem(recording_path);
+    Ok(dir.join(format!("{}.chat.json", name)))
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TranscriptionMetadata {
     model_id: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ChatHistoryMessage {
+    pub role: String, // "user" | "assistant"
+    pub content: String,
 }
 
 pub fn save_transcription_result(app: &AppHandle, recording_path: &str, text: &str) -> Result<()> {
@@ -258,4 +279,29 @@ pub fn load_transcription_metadata(app: &AppHandle, recording_path: &str) -> Res
     let json = std::fs::read_to_string(&path)?;
     let meta: TranscriptionMetadata = serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("metadata: {}", e))?;
     Ok(Some(meta.model_id))
+}
+
+pub fn save_transcription_chat_history(
+    app: &AppHandle,
+    recording_path: &str,
+    messages: &[ChatHistoryMessage],
+) -> Result<()> {
+    let path = transcription_chat_history_path(app, recording_path)?;
+    let json = serde_json::to_string_pretty(messages)?;
+    std::fs::write(&path, json)?;
+    Ok(())
+}
+
+pub fn load_transcription_chat_history(
+    app: &AppHandle,
+    recording_path: &str,
+) -> Result<Vec<ChatHistoryMessage>> {
+    let path = transcription_chat_history_path(app, recording_path)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let json = std::fs::read_to_string(&path)?;
+    let messages: Vec<ChatHistoryMessage> =
+        serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("chat history: {}", e))?;
+    Ok(messages)
 }

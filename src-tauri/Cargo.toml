@@ -27,6 +27,8 @@ rubato = "0.16"
 transcribe-rs = { version = "0.2.2", features = ["whisper", "parakeet", "moonshine"] }
 log = "0.4"
 urlencoding = "2"
+async-openai = "0.28"
+tokio = { version = "1", features = ["full"] }
 ort = "=2.0.0-rc.10"
 ort-sys = "=2.0.0-rc.10"
 

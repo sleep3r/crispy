@@ -4,6 +4,7 @@
 mod commands;
 mod managers;
 mod recording;
+mod llm_settings;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::VecDeque;
@@ -871,6 +872,14 @@ fn rename_recording(app: tauri::AppHandle, path: String, new_name: String) -> Re
             let _ = std::fs::rename(&old_meta, &new_meta);
         }
     }
+    if let (Ok(old_chat), Ok(new_chat)) = (
+        managers::transcription::transcription_chat_history_path(&app, &old_path_str),
+        managers::transcription::transcription_chat_history_path(&app, &new_path_str),
+    ) {
+        if old_chat.exists() && old_chat != new_chat {
+            let _ = std::fs::rename(&old_chat, &new_chat);
+        }
+    }
 
     Ok(())
 }
@@ -1038,6 +1047,20 @@ fn main() {
                 model_manager,
             ));
             app.manage(transcription_manager);
+            if let Ok(app_settings) = llm_settings::load_app_settings(app.handle()) {
+                if !app_settings.selected_transcription_model.is_empty()
+                    && app_settings.selected_transcription_model != "none"
+                {
+                    if let Some(selected) = app
+                        .try_state::<commands::models::SelectedModelState>()
+                        .map(|s| s.0.clone())
+                    {
+                        if let Ok(mut guard) = selected.lock() {
+                            *guard = app_settings.selected_transcription_model;
+                        }
+                    }
+                }
+            }
             let icon = app
                 .path()
                 .resolve("resources/tray.png", tauri::path::BaseDirectory::Resource)
@@ -1100,7 +1123,13 @@ fn main() {
             commands::transcription::get_transcription_model,
             commands::transcription::open_transcription_window,
             commands::transcription::has_transcription_result,
-            commands::transcription::ask_transcription_question,
+            commands::transcription::get_llm_settings,
+            commands::transcription::set_llm_settings,
+            commands::transcription::stream_transcription_chat,
+            commands::transcription::get_transcription_chat_history,
+            commands::transcription::set_transcription_chat_history,
+            commands::settings::get_app_settings,
+            commands::settings::set_app_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Send } from "lucide-react";
 
 const getPathFromQuery = (): string | null => {
-  const params = new URLSearchParams(window.location.search);
+  const params = new URLSearchParams(globalThis.location.search);
   return params.get("recording_path");
 };
 
@@ -12,6 +12,8 @@ type ChatMessage = {
   role: "user" | "bot";
   name?: string;
   content: string;
+  chatId?: string; // For tracking streaming responses
+  streaming?: boolean; // If bot message is still streaming
 };
 
 export const TranscriptionResultView: React.FC = () => {
@@ -22,6 +24,7 @@ export const TranscriptionResultView: React.FC = () => {
   const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const recordingPathRef = useRef<string | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -31,13 +34,20 @@ export const TranscriptionResultView: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
+  useEffect(() => {
+    recordingPathRef.current = recordingPath;
+  }, [recordingPath]);
+
   const loadTranscription = async (path: string) => {
     setLoading(true);
     setError(null);
     try {
-      const [text, modelId] = await Promise.all([
+      const [text, modelId, history] = await Promise.all([
         invoke<string | null>("get_transcription_result", { recordingPath: path }),
         invoke<string | null>("get_transcription_model", { recordingPath: path }),
+        invoke<{ role: string; content: string }[]>("get_transcription_chat_history", {
+          recordingPath: path,
+        }),
       ]);
       let modelName = "Transcription";
       if (modelId && modelId !== "none") {
@@ -45,12 +55,17 @@ export const TranscriptionResultView: React.FC = () => {
         if (info?.name) modelName = info.name;
       }
       const content = text ?? "";
+      const historyMessages: ChatMessage[] = (history || []).map((m) => ({
+        role: m.role === "user" ? "user" : "bot",
+        content: m.content,
+      }));
       setMessages([
         {
           role: "bot",
           name: modelName,
           content: content || "(Empty transcription)",
         },
+        ...historyMessages,
       ]);
       setRecordingPath(path);
     } catch (err) {
@@ -63,16 +78,67 @@ export const TranscriptionResultView: React.FC = () => {
   };
 
   useEffect(() => {
-    const unlisten = listen<{ recording_path: string }>("transcription-open", (event) => {
+    const unlistenOpen = listen<{ recording_path: string }>("transcription-open", (event) => {
       const p = event?.payload?.recording_path;
       if (p) {
-        const url = new URL(window.location.href);
+        const url = new URL(globalThis.location.href);
         url.searchParams.set("recording_path", p);
-        window.history.replaceState(null, "", url.toString());
+        globalThis.history.replaceState(null, "", url.toString());
         setError(null);
         loadTranscription(p);
       }
     });
+
+    const unlistenStream = listen<{ chat_id: string; delta: string }>(
+      "transcription-chat-stream",
+      (event) => {
+        const { chat_id, delta } = event.payload;
+        setMessages((prev) => {
+          const lastIndex = prev.findIndex(
+            (m) => m.role === "bot" && m.chatId === chat_id && m.streaming
+          );
+          if (lastIndex === -1) return prev;
+          const updated = [...prev];
+          updated[lastIndex] = {
+            ...updated[lastIndex],
+            content: updated[lastIndex].content + delta,
+          };
+          return updated;
+        });
+      }
+    );
+
+    const unlistenDone = listen<{ chat_id: string }>("transcription-chat-done", (event) => {
+      const { chat_id } = event.payload;
+      setMessages((prev) => {
+        const next = prev.map((m) =>
+          m.chatId === chat_id ? { ...m, streaming: false } : m
+        );
+        persistChatHistory(next);
+        return next;
+      });
+      setSending(false);
+    });
+
+    const unlistenError = listen<{ chat_id: string; delta: string }>(
+      "transcription-chat-error",
+      (event) => {
+        const { chat_id, delta } = event.payload;
+        setMessages((prev) => {
+          const lastIndex = prev.findIndex((m) => m.chatId === chat_id && m.streaming);
+          if (lastIndex === -1) return prev;
+          const updated = [...prev];
+          updated[lastIndex] = {
+            ...updated[lastIndex],
+            content: delta,
+            streaming: false,
+          };
+          persistChatHistory(updated);
+          return updated;
+        });
+        setSending(false);
+      }
+    );
 
     (async () => {
       const fromQuery = getPathFromQuery();
@@ -84,7 +150,10 @@ export const TranscriptionResultView: React.FC = () => {
     })();
 
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenOpen.then((fn) => fn());
+      unlistenStream.then((fn) => fn());
+      unlistenDone.then((fn) => fn());
+      unlistenError.then((fn) => fn());
     };
   }, []);
 
@@ -92,22 +161,62 @@ export const TranscriptionResultView: React.FC = () => {
     const trimmed = inputValue.trim();
     if (!trimmed || !recordingPath || sending) return;
     setInputValue("");
-    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
     setSending(true);
+
+    const userMsg: ChatMessage = { role: "user", content: trimmed };
+    const chatId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const botMsg: ChatMessage = {
+      role: "bot",
+      content: "",
+      chatId,
+      streaming: true,
+    };
+
+    setMessages((prev) => [...prev, userMsg, botMsg]);
+
     try {
-      const reply = await invoke<string>("ask_transcription_question", {
+      const chatHistory = [
+        ...messages.filter((m) => !m.streaming),
+        userMsg,
+      ].map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.content,
+      }));
+
+      await invoke("stream_transcription_chat", {
         recordingPath,
-        question: trimmed,
+        messages: chatHistory,
+        chatId,
       });
-      setMessages((prev) => [...prev, { role: "bot", content: reply }]);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "bot", content: err instanceof Error ? err.message : "Error sending question." },
-      ]);
-    } finally {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.chatId === chatId
+            ? {
+                ...m,
+                content: err instanceof Error ? err.message : "Error sending question.",
+                streaming: false,
+              }
+            : m
+        )
+      );
       setSending(false);
     }
+  };
+
+  const persistChatHistory = (nextMessages: ChatMessage[]) => {
+    const path = recordingPathRef.current;
+    if (!path) return;
+    const payload = nextMessages
+      .filter((_, index) => index > 0)
+      .filter((m) => !m.streaming)
+      .map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.content,
+      }));
+    invoke("set_transcription_chat_history", { recordingPath: path, messages: payload }).catch(
+      console.error
+    );
   };
 
   if (loading) {
@@ -141,16 +250,16 @@ export const TranscriptionResultView: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg, i) =>
           msg.role === "bot" ? (
-            <div key={i} className="flex flex-col items-start max-w-[85%]">
+            <div key={msg.chatId ?? `bot-${i}`} className="flex flex-col items-start max-w-[85%]">
               {msg.name && (
                 <span className="text-xs font-medium text-mid-gray mb-1">{msg.name}</span>
               )}
               <div className="rounded-lg rounded-tl-none bg-mid-gray/10 px-3 py-2 text-sm whitespace-pre-wrap break-words">
-                {msg.content}
+                {msg.content || (msg.streaming && "...")}
               </div>
             </div>
           ) : (
-            <div key={i} className="flex justify-end">
+            <div key={msg.chatId ?? `user-${i}`} className="flex justify-end">
               <div className="rounded-lg rounded-tr-none bg-slider-fill/15 text-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap break-words">
                 {msg.content}
               </div>

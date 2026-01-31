@@ -37,6 +37,7 @@ let cachedAudioDevices: AudioDevice[] = [];
 let cachedOutputDevices: AudioDevice[] = [];
 let didInitDevices = false;
 const deviceListeners = new Set<() => void>();
+let settingsInitPromise: Promise<void> | null = null;
 
 const notifyDeviceListeners = () => {
   deviceListeners.forEach((listener) => listener());
@@ -49,6 +50,19 @@ const notify = () => {
 const updateState = (partial: Partial<SettingsState>) => {
   settingsState = { ...settingsState, ...partial };
   notify();
+};
+
+const ensureSettingsLoaded = async () => {
+  if (settingsInitPromise) return settingsInitPromise;
+  settingsInitPromise = (async () => {
+    try {
+      const saved = await invoke<Partial<SettingsState>>("get_app_settings");
+      updateState({ ...defaultSettings, ...saved });
+    } catch (error) {
+      console.error("Failed to load app settings:", error);
+    }
+  })();
+  return settingsInitPromise;
 };
 
 export const useSettings = () => {
@@ -65,6 +79,10 @@ export const useSettings = () => {
     return () => {
       listeners.delete(listener);
     };
+  }, []);
+
+  useEffect(() => {
+    ensureSettingsLoaded();
   }, []);
 
   useEffect(() => {
@@ -108,6 +126,7 @@ export const useSettings = () => {
 
   const initializeDefaultDevices = useCallback(async () => {
     try {
+      await ensureSettingsLoaded();
       const defaults = await invoke<{
         default_input: string | null;
         blackhole_output: string | null;
@@ -116,11 +135,19 @@ export const useSettings = () => {
       // Set default input if not already set
       if (!settingsState.selected_microphone && defaults.default_input) {
         updateState({ selected_microphone: defaults.default_input });
+        invoke("set_app_setting", {
+          key: "selected_microphone",
+          value: defaults.default_input,
+        }).catch(console.error);
       }
 
       // Set BlackHole output if found and not already set
       if (!settingsState.selected_output_device && defaults.blackhole_output) {
         updateState({ selected_output_device: defaults.blackhole_output });
+        invoke("set_app_setting", {
+          key: "selected_output_device",
+          value: defaults.blackhole_output,
+        }).catch(console.error);
       }
     } catch (error) {
       console.error("Failed to initialize default devices:", error);
@@ -133,6 +160,7 @@ export const useSettings = () => {
     didInitDevices = true;
     
     const init = async () => {
+      await ensureSettingsLoaded();
       await Promise.all([refreshAudioDevices(), refreshOutputDevices()]);
       await initializeDefaultDevices();
     };
@@ -144,10 +172,20 @@ export const useSettings = () => {
 
   const updateSetting = async (key: SettingKey, value: string) => {
     updateState({ [key]: value });
+    try {
+      await invoke("set_app_setting", { key, value });
+    } catch (error) {
+      console.error("Failed to persist setting:", error);
+    }
   };
 
   const resetSetting = async (key: SettingKey) => {
     updateState({ [key]: defaultSettings[key] });
+    try {
+      await invoke("set_app_setting", { key, value: defaultSettings[key] });
+    } catch (error) {
+      console.error("Failed to persist setting reset:", error);
+    }
   };
 
   const isUpdating = (_key: SettingKey) => false;

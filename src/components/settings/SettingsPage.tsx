@@ -1,6 +1,7 @@
 import React from "react";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { RecordingsDirectory } from "./RecordingsDirectory";
+import { LlmSettings } from "./LlmSettings";
 
 export const SettingsPage: React.FC = () => {
   return (
@@ -17,6 +18,13 @@ export const SettingsPage: React.FC = () => {
         description="Where recordings are stored."
       >
         <RecordingsDirectory grouped />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="LLM Chat"
+        description="Configure language model for transcription chat."
+      >
+        <LlmSettings grouped />
       </SettingsGroup>
     </div>
   );
