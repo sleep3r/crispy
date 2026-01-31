@@ -1,99 +1,252 @@
-# Crispy
+<div align="center">
+  <img src="./logo.png" alt="Crispy Logo" width="600" />
 
-**A free, open source, and privacy-focused noise suppression application that works completely offline.**
+  <h3>Real-time AI noise suppression, transcription, and meeting recording</h3>
+  
+  <p>
+    <strong>Privacy-first · Lightning-fast · Completely offline</strong>
+  </p>
 
-Crispy is a cross-platform desktop application built with Tauri (Rust + React/TypeScript) that aims to provide real-time noise suppression for your microphone. It processes audio locally to remove background noise without sending your voice to the cloud.
+  <p>
+    <a href="#features">Features</a> •
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#how-it-works">How It Works</a> •
+    <a href="#development">Development</a>
+  </p>
+</div>
 
-## Why Crispy?
+---
 
-*   **Private**: Your voice stays on your computer. No cloud processing.
-*   **Simple**: Clean, black-and-white interface designed for focus.
-*   **Open**: Built on open technologies like Tauri and Rust.
+## What is Crispy?
 
-## Current Status
+**Crispy** is a powerful desktop application that enhances your audio in real-time with AI-powered noise suppression, automatic transcription, and intelligent meeting recording—all without sending your data to the cloud.
 
-🚧 **Early Development**
+Built with **Tauri v2** (Rust backend + React/TypeScript frontend), Crispy processes everything locally on your machine, ensuring your conversations remain private while delivering professional-quality audio.
 
-Current focus:
-*   ✅ **Device selection** - Working input/output device enumeration
-*   ✅ **Live audio monitoring** - Real-time input level meters
-*   ✅ **BlackHole 2 integration** - Required for audio routing on macOS
-*   🚧 **Noise suppression** - DSP framework in place, awaiting ML model integration
+## ✨ Features
 
-## Quick Start
+### 🎙️ AI Noise Suppression
+- **Real-time processing** with multiple model options (Whisper, Parakeet, Moonshine)
+- **Adaptive volume control** to maintain consistent levels
+- **Zero-latency monitoring** for immediate feedback
+- Routes clean audio to any application (Zoom, Discord, Teams, etc.)
+
+### 📝 Smart Transcription
+- **Automatic transcription** of all your recordings
+- **Chat with AI** about your transcriptions using OpenAI/Poe.com
+- **Model metadata** tracking—always know which model was used
+- **Chat history** saved locally per recording
+
+### 🎬 Meeting Recording
+- **Dual-source capture**: Microphone + application audio (e.g., browser, Zoom)
+- **Stereo output**: Mixed dual-mono for perfect playback
+- **Auto-resampling**: Handles different sample rates (44.1kHz → 48kHz)
+- **One-click recording** from system tray
+
+### 🔒 Privacy-First Design
+- **100% offline processing** - no internet required for noise suppression
+- **Local storage** - recordings, transcriptions, and settings stay on your machine
+- **Optional cloud AI** - only for chat features, with your explicit API keys
+
+### 🎨 Beautiful UX
+- **System tray popup** for quick controls
+- **Dark mode ready** with a clean, modern interface
+- **Settings persistence** across dev/release builds
+
+## 🚀 Quick Start
 
 ### Prerequisites
 
-*   macOS (for BlackHole 2 routing)
-*   Node.js (for frontend)
-*   Rust (for backend)
+- **macOS 13.0+** (Ventura or later) for ScreenCaptureKit support
+- **Node.js 18+** and **npm**
+- **Rust** (latest stable)
+- **Xcode Command Line Tools**: `xcode-select --install`
 
-### Development
+### Installation
 
-1.  **Install dependencies:**
-    ```bash
-    make install
-    # or: npm install
-    ```
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yourusername/crispy.git
+   cd crispy
+   ```
 
-2.  **Install BlackHole 2ch (macOS only):**
-    ```bash
-    # Download and install from:
-    # https://existential.audio/blackhole/
-    ```
-    BlackHole 2ch is required for routing audio to other apps.
+2. **Install dependencies:**
+   ```bash
+   make install
+   ```
 
-3.  **Run in development mode:**
-    ```bash
-    make dev
-    # or: npm run tauri dev
-    ```
+3. **Install BlackHole 2ch (recommended):**
+   
+   BlackHole is a virtual audio driver for routing processed audio to other apps.
+   
+   ```bash
+   # Download from:
+   https://existential.audio/blackhole/
+   ```
 
-4.  **Build for production:**
-    ```bash
-    make build
-    # or: npm run tauri build
-    ```
+4. **Run in development:**
+   ```bash
+   make dev
+   ```
 
-### Audio Routing
+5. **Build for production:**
+   ```bash
+   make build
+   ```
+   The app bundle will be in `src-tauri/target/release/bundle/`
 
-Crispy relies on **BlackHole 2ch** for macOS audio routing. If BlackHole is not installed,
-the app will warn you and disable audio routing features.
+### First-Time Setup
 
-## Architecture
+1. **Grant microphone permissions** when prompted
+2. **Grant screen recording permissions** (required for app audio capture)
+3. **Select your microphone** in Settings → General
+4. **Select BlackHole 2ch** as output device (or any virtual audio device)
+5. **Choose a noise suppression model** in Settings → Models
+6. **Optionally configure LLM** in Settings → LLM Chat (for transcription chat)
 
-Crispy is built as a Tauri application with a simple audio pipeline:
+## 🏗️ How It Works
 
-*   **Frontend**: React + TypeScript with Tailwind CSS (v4) for the UI
-*   **Backend**: Rust using CPAL for audio I/O and custom real-time processing
-*   **Audio Engine**: Capture → Process → Meter
-*   **Routing**: BlackHole 2ch (system driver)
+### Audio Pipeline
 
 ```
-Physical Mic → Crispy App → BlackHole 2ch → Zoom/Discord/etc.
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────────┐
+│  Microphone │ -> │ Noise Model  │ -> │  Monitor    │ -> │  BlackHole   │ -> Apps
+│  (Physical) │    │  (AI/Dummy)  │    │  + Record   │    │  (Virtual)   │    (Zoom, etc.)
+└─────────────┘    └──────────────┘    └─────────────┘    └──────────────┘
+                                              │
+                                              v
+                                        ┌─────────────┐
+                                        │   WAV File  │
+                                        │  + App Audio│
+                                        └─────────────┘
 ```
 
-## Roadmap
+### Technology Stack
 
-*   [x] UI Scaffold (Handy-inspired)
-*   [x] Device Selection UI
-*   [x] Real-time Audio Monitoring
-*   [x] BlackHole-based routing on macOS
-*   [ ] Noise Suppression Model Integration
-*   [ ] DSP effects (compression, EQ, etc.)
-*   [ ] Windows virtual audio device support
+**Frontend**
+- React 18 + TypeScript
+- Tailwind CSS v4 (modern design system)
+- Tauri API for native integration
+- Real-time event streaming
 
-## Documentation
+**Backend (Rust)**
+- **Audio**: CPAL (cross-platform audio), Hound (WAV I/O), Rubato (resampling)
+- **Noise Suppression**: transcribe-rs + ONNX Runtime
+- **Transcription**: Whisper, Parakeet, Moonshine models
+- **App Audio Capture**: ScreenCaptureKit (macOS 12.3+)
+- **LLM Integration**: async-openai SDK for chat streaming
+- **Persistence**: JSON-based settings + metadata
 
-- [Makefile](Makefile) - All available build targets and commands
+**macOS Integration**
+- System tray with webview popup
+- Window positioning via `tauri-plugin-positioner`
+- Native permissions (Microphone, Screen Recording)
 
-## Helpful Commands
+## 📖 Usage Guide
+
+### Basic Workflow
+
+1. **Start monitoring**: Your mic is processed in real-time and routed to the output device
+2. **Start recording**: Click record in settings or use the system tray
+3. **Stop recording**: Audio is saved to `~/Documents/Crispy/Recordings/`
+4. **View transcription**: Auto-generated for each recording (if model selected)
+5. **Chat with AI**: Ask questions about your transcription using LLM
+
+### Recording with App Audio
+
+To record both your mic and application audio (e.g., Zoom calls):
+
+1. Go to **Settings → Recording → App Audio Capture**
+2. Select the application (Chrome, Zoom, etc.)
+3. Start recording—both sources will be mixed in stereo
+
+### Transcription
+
+1. **Download a model**: Settings → Transcription → Download models
+2. **Activate a model**: Select it from the dropdown
+3. **Record**: Transcription happens automatically after recording stops
+4. **View results**: Click any recording to see the transcription window
+
+### LLM Chat (Optional)
+
+Configure in **Settings → LLM Chat**:
+- **Endpoint**: `https://api.openai.com/v1` (or `https://api.poe.com/v1`)
+- **API Key**: Your OpenAI/Poe API key
+- **Model**: `gpt-4`, `claude-3-5-sonnet`, etc.
+
+Once configured, chat with AI about your transcriptions to summarize, translate, or extract insights.
+
+## 🛠️ Development
+
+### Project Structure
+
+```
+crispy/
+├── src/                    # React/TypeScript frontend
+│   ├── components/        # UI components
+│   ├── hooks/             # React hooks (settings, models)
+│   └── main.tsx           # Entry point
+├── src-tauri/             # Rust backend
+│   ├── src/
+│   │   ├── main.rs        # Tauri app setup, audio pipeline
+│   │   ├── recording.rs   # Recording logic, ScreenCaptureKit
+│   │   ├── commands/      # Tauri commands (API)
+│   │   └── managers/      # Model + transcription managers
+│   ├── build.rs           # Build script (Swift linking)
+│   └── Cargo.toml         # Rust dependencies
+└── Makefile               # Build targets and commands
+```
+
+### Useful Commands
 
 ```bash
-make help              # Show all available commands
-make dev              # Run in development mode
+make help                 # Show all available commands
+make dev                  # Run in development mode
+make build                # Build release binary
+make clean                # Clean build artifacts
+make install              # Install dependencies
 ```
 
-## License
+### Debugging
 
-MIT
+**Enable Rust logs:**
+```bash
+RUST_LOG=debug make dev
+```
+
+**Check audio devices:**
+```rust
+// In Rust backend
+println!("Available devices: {:?}", devices);
+```
+
+## 🗺️ Roadmap
+
+- [x] Real-time noise suppression
+- [x] Device selection and audio routing
+- [x] Live audio monitoring with meters
+- [x] Recording (mic + app audio)
+- [x] Auto-transcription with multiple models
+- [x] LLM chat integration (streaming responses)
+- [x] System tray with quick controls
+- [x] Settings persistence
+- [x] ScreenCaptureKit app audio capture
+- [ ] Multi-language support
+- [ ] Custom hotkeys
+- [ ] Windows/Linux support
+- [ ] Additional noise models
+- [ ] Audio effects (EQ, compressor)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit issues or pull requests.
+
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) for details
+
+---
+
+<div align="center">
+  <sub>Built with ❤️ using Rust, React, and Tauri</sub>
+</div>
