@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(deprecated)]
 
+mod commands;
+mod managers;
 mod recording;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -9,9 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use base64::Engine;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
-use tauri::{Emitter, Manager};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_positioner::{Position, WindowExt};
 use recording::{RecordingState, RecordableApp};
 
 #[derive(serde::Serialize)]
@@ -605,82 +607,53 @@ fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     recording::get_recordable_apps()
 }
 
-#[tauri::command]
-fn start_recording(
-    state: tauri::State<AppState>,
-    _app_id: String,
-) -> Result<(), String> {
+fn do_start_recording(state: &AppState) -> Result<(), String> {
     let mut recording = state.recording.lock().unwrap();
-    
+
     if recording.writer.lock().unwrap().is_some() {
         return Err("Recording already in progress".to_string());
     }
 
-    // Create output directory
     let home = std::env::var("HOME").map_err(|_| "Cannot find home directory".to_string())?;
     let output_dir = std::path::PathBuf::from(home)
         .join("Documents")
         .join("Crispy")
         .join("Recordings");
-    
+
     std::fs::create_dir_all(&output_dir)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
 
-    // Generate filename
     let now = chrono::Local::now();
     let filename = format!("recording_{}.wav", now.format("%Y%m%d_%H%M%S"));
     let output_path = output_dir.join(filename);
 
-    // Create WAV writer
     let writer = recording::WavWriter::new(output_path)
         .map_err(|e| format!("Failed to create WAV writer: {}", e))?;
-    
-    *recording.writer.lock().unwrap() = Some(writer);
 
-    // Clear buffers so we only record from *after* the user pressed Start
+    *recording.writer.lock().unwrap() = Some(writer);
     recording.mic_buffer.lock().unwrap().clear();
     recording.app_buffer.lock().unwrap().clear();
 
-    // TODO: Start app audio capture via ScreenCaptureKit
-    // For now, app_buffer will remain empty (recording mic only)
-
-    println!("Starting recording worker...");
-    
-    // Start mixing worker thread and store handle
     let handle = start_recording_worker(
         recording.mic_buffer.clone(),
         recording.app_buffer.clone(),
         recording.writer.clone(),
     );
-    
     recording.worker = Some(handle);
-
-    println!("Recording started successfully");
     Ok(())
 }
 
-#[tauri::command]
-fn stop_recording(state: tauri::State<AppState>) -> Result<String, String> {
-    println!("Stop recording requested");
-    
-    // Signal worker to stop
+fn do_stop_recording(state: &AppState) -> Result<String, String> {
     RECORDING_ACTIVE.store(false, Ordering::SeqCst);
-    
-    // Take worker handle and join it
+
     let worker_handle = {
         let mut recording = state.recording.lock().unwrap();
         recording.worker.take()
     };
-    
+
     if let Some(handle) = worker_handle {
-        println!("Joining worker thread...");
-        match handle.join() {
-            Ok(_) => println!("Worker thread joined successfully"),
-            Err(e) => eprintln!("Worker thread panicked: {:?}", e),
-        }
+        let _ = handle.join();
     }
-    
-    // TODO: Stop ScreenCaptureKit stream when implemented
 
     let recording = state.recording.lock().unwrap();
     let writer_option = recording.writer.clone();
@@ -688,20 +661,27 @@ fn stop_recording(state: tauri::State<AppState>) -> Result<String, String> {
     let app_buffer = recording.app_buffer.clone();
     drop(recording);
 
-    println!("Taking writer for finalization...");
     if let Some(writer) = writer_option.lock().unwrap().take() {
-        println!("Finalizing WAV file...");
         let output_path = writer.finalize()?;
-        println!("WAV finalized: {:?}", output_path);
-
-        // Clear buffers after finalize
         mic_buffer.lock().unwrap().clear();
         app_buffer.lock().unwrap().clear();
-
         return Ok(output_path.to_string_lossy().to_string());
     }
 
     Err("No recording in progress".to_string())
+}
+
+#[tauri::command]
+fn start_recording(
+    state: tauri::State<AppState>,
+    _app_id: String,
+) -> Result<(), String> {
+    do_start_recording(state.inner())
+}
+
+#[tauri::command]
+fn stop_recording(state: tauri::State<AppState>) -> Result<String, String> {
+    do_stop_recording(state.inner())
 }
 
 #[tauri::command]
@@ -847,6 +827,55 @@ fn get_recordings() -> Result<Vec<RecordingFile>, String> {
 }
 
 #[tauri::command]
+fn rename_recording(app: tauri::AppHandle, path: String, new_name: String) -> Result<(), String> {
+    let old_path_str = path.clone();
+    let path = std::path::Path::new(&path);
+    if !path.exists() {
+        return Err("Recording not found".to_string());
+    }
+    let parent = path
+        .parent()
+        .ok_or("Invalid path")?;
+    let new_name = new_name.trim();
+    if new_name.is_empty() {
+        return Err("Name cannot be empty".to_string());
+    }
+    if new_name.contains(std::path::MAIN_SEPARATOR) || new_name.contains('/') || new_name.contains('\\') {
+        return Err("Name cannot contain path separators".to_string());
+    }
+    let base = std::path::Path::new(new_name).file_stem().and_then(|s| s.to_str()).unwrap_or(new_name);
+    let new_path = parent.join(format!("{}.wav", base));
+    if new_path == path {
+        return Ok(());
+    }
+    if new_path.exists() {
+        return Err("A file with this name already exists".to_string());
+    }
+    std::fs::rename(&path, &new_path).map_err(|e| format!("Failed to rename: {}", e))?;
+
+    // Move transcription result and metadata to the new path so they stay associated with the recording
+    let new_path_str = new_path.to_string_lossy();
+    if let (Ok(old_txt), Ok(new_txt)) = (
+        managers::transcription::transcription_result_path(&app, &old_path_str),
+        managers::transcription::transcription_result_path(&app, &new_path_str),
+    ) {
+        if old_txt.exists() && old_txt != new_txt {
+            let _ = std::fs::rename(&old_txt, &new_txt);
+        }
+    }
+    if let (Ok(old_meta), Ok(new_meta)) = (
+        managers::transcription::transcription_metadata_path(&app, &old_path_str),
+        managers::transcription::transcription_metadata_path(&app, &new_path_str),
+    ) {
+        if old_meta.exists() && old_meta != new_meta {
+            let _ = std::fs::rename(&old_meta, &new_meta);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn delete_recording(path: String) -> Result<(), String> {
     std::fs::remove_file(&path)
         .map_err(|e| format!("Failed to delete recording: {}", e))?;
@@ -949,9 +978,45 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+#[tauri::command]
+fn show_main_window_cmd(app: tauri::AppHandle) {
+    show_main_window(&app);
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("tray-popup") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = window.hide();
+        } else {
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = window.move_window(Position::TrayBottomCenter);
+        }
+        return;
+    }
+    let url = WebviewUrl::App("index.html".into());
+    let _ = WebviewWindowBuilder::new(app, "tray-popup", url)
+        .title("Crispy")
+        .inner_size(260.0, 240.0)
+        .decorations(false)
+        .resizable(false)
+        .build();
+    if let Some(window) = app.get_webview_window("tray-popup") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.move_window(Position::TrayBottomCenter);
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_positioner::init())
         .manage(AppState {
             audio: Arc::new(Mutex::new(AudioMonitorState {
                 input_stream: None,
@@ -960,28 +1025,19 @@ fn main() {
             })),
             recording: Arc::new(Mutex::new(RecordingState::new())),
         })
+        .manage(commands::models::SelectedModelState(Arc::new(Mutex::new(
+            String::new(),
+        ))))
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            let (open_accel, quit_accel) = (Some("Cmd+,"), Some("Cmd+Q"));
-            #[cfg(not(target_os = "macos"))]
-            let (open_accel, quit_accel) = (Some("Ctrl+,"), Some("Ctrl+Q"));
-
-            let version = env!("CARGO_PKG_VERSION");
-            let version_label = format!("Crispy v{version}");
-            let version_i = MenuItem::with_id(app, "version", &version_label, false, None::<&str>)
-                .map_err(|e| e.to_string())?;
-            let open_i =
-                MenuItem::with_id(app, "open", "Open…", true, open_accel).map_err(|e| e.to_string())?;
-            let quit_i =
-                MenuItem::with_id(app, "quit", "Quit", true, quit_accel).map_err(|e| e.to_string())?;
-            let sep = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
-
-            let menu = Menu::with_items(
-                app,
-                &[&version_i, &sep, &open_i, &sep, &quit_i],
-            )
-            .map_err(|e| e.to_string())?;
-
+            let model_manager = Arc::new(
+                managers::model::ModelManager::new(app.handle())
+                    .map_err(|e| e.to_string())?,
+            );
+            app.manage(model_manager.clone());
+            let transcription_manager = Arc::new(managers::transcription::TranscriptionManager::new(
+                model_manager,
+            ));
+            app.manage(transcription_manager);
             let icon = app
                 .path()
                 .resolve("resources/tray.png", tauri::path::BaseDirectory::Resource)
@@ -991,13 +1047,17 @@ fn main() {
             let icon = icon.expect("tray icon: run scripts/tray_icon.py or provide default icon");
             let tray = TrayIconBuilder::new()
                 .icon(icon)
-                .menu(&menu)
-                .menu_on_left_click(true)
+                .menu_on_left_click(false)
                 .icon_as_template(true)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => show_main_window(app),
-                    "quit" => app.exit(0),
-                    _ => {}
+                .on_tray_icon_event(|tray, event| {
+                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
+                    if let TrayIconEvent::Click {
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_or_toggle_tray_popup(tray.app_handle());
+                    }
                 })
                 .build(app)
                 .map_err(|e| e.to_string())?;
@@ -1021,9 +1081,26 @@ fn main() {
             get_recordings_dir_path,
             open_recordings_dir,
             open_url,
+            show_main_window_cmd,
+            quit_app,
             get_recordings,
+            rename_recording,
             delete_recording,
-            read_recording_file
+            read_recording_file,
+            commands::models::get_available_models,
+            commands::models::get_model_info,
+            commands::models::download_model,
+            commands::models::delete_model,
+            commands::models::set_active_model,
+            commands::models::get_current_model,
+            commands::models::cancel_download,
+            commands::models::get_recommended_first_model,
+            commands::transcription::start_transcription,
+            commands::transcription::get_transcription_result,
+            commands::transcription::get_transcription_model,
+            commands::transcription::open_transcription_window,
+            commands::transcription::has_transcription_result,
+            commands::transcription::ask_transcription_question,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

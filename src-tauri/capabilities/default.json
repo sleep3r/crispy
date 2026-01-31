@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capability for the app",
-  "windows": ["main"],
+  "windows": ["main", "tray-popup", "transcription-result"],
   "permissions": [
     "core:default",
     "core:event:default",
