@@ -1002,7 +1002,7 @@ fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
     let url = WebviewUrl::App("index.html".into());
     let _ = WebviewWindowBuilder::new(app, "tray-popup", url)
         .title("Crispy")
-        .inner_size(260.0, 240.0)
+        .inner_size(260.0, 220.0)
         .decorations(false)
         .resizable(false)
         .build();

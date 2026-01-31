@@ -50,7 +50,7 @@ export const TrayPopupView: React.FC = () => {
   };
 
   return (
-    <div className="h-full min-h-0 overflow-hidden bg-background text-text flex flex-col justify-start p-3 rounded-lg border border-mid-gray/20 shadow-lg">
+    <div className="h-screen overflow-hidden bg-background text-text flex flex-col pt-3 px-3 pb-0 rounded-t-lg border-x border-t border-mid-gray/20 shadow-lg">
       <div className="shrink-0 flex items-center justify-between mb-2 pb-2 border-b border-mid-gray/20">
         <span className="text-sm font-semibold">Crispy</span>
       </div>
