@@ -6,6 +6,7 @@ import {
   MicrophoneVolume,
   RecordingControls,
 } from "../";
+import { AppSelector } from "../AppSelector";
 import { useBlackHoleStatus } from "../../../hooks/useBlackHoleStatus";
 import { useSettings } from "../../../hooks/useSettings";
 
@@ -71,6 +72,7 @@ export const GeneralSettings: React.FC = () => {
         title="Recording"
         description="Record meetings with processed mic + app audio."
       >
+        <AppSelector grouped />
         <RecordingControls />
       </SettingsGroup>
     </div>

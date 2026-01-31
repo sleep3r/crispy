@@ -29,6 +29,7 @@ pub struct AppSettings {
     pub microphone_volume: String,
     pub selected_model: String,
     pub selected_transcription_model: String,
+    pub selected_recording_app: String,
 }
 
 impl Default for AppSettings {
@@ -39,6 +40,7 @@ impl Default for AppSettings {
             microphone_volume: "100".to_string(),
             selected_model: "dummy".to_string(),
             selected_transcription_model: "none".to_string(),
+            selected_recording_app: "none".to_string(),
         }
     }
 }
@@ -132,6 +134,7 @@ pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<(
         "microphone_volume" => settings.microphone_volume = value,
         "selected_model" => settings.selected_model = value,
         "selected_transcription_model" => settings.selected_transcription_model = value,
+        "selected_recording_app" => settings.selected_recording_app = value,
         _ => return Err(anyhow::anyhow!("Unknown setting key: {}", key)),
     }
     save_app_settings(app, &settings)

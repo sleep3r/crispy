@@ -2,8 +2,10 @@ import React, { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { SettingContainer } from "../ui/SettingContainer";
 import { Circle, Square } from "lucide-react";
+import { useSettings } from "../../hooks/useSettings";
 
 export const RecordingControls: React.FC = () => {
+  const { getSetting } = useSettings();
   const [isRecording, setIsRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,7 +28,8 @@ export const RecordingControls: React.FC = () => {
   const handleStartRecording = async () => {
     try {
       setError(null);
-      await invoke("start_recording", { appId: "system" });
+      const selectedApp = getSetting("selected_recording_app") || "none";
+      await invoke("start_recording", { appId: selectedApp });
       setIsRecording(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start recording");
@@ -85,8 +88,8 @@ export const RecordingControls: React.FC = () => {
 
         <div className="flex flex-col gap-1 text-xs text-mid-gray">
           <div>Recordings are saved to: ~/Documents/Crispy/Recordings/</div>
-          <div className="text-yellow-600">
-            Note: Records to WAV format. Currently mic only, app audio coming soon.
+          <div>
+            Records to WAV format. Mic + app audio mixed to stereo (dual-mono).
           </div>
         </div>
       </div>

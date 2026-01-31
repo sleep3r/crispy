@@ -8,3 +8,4 @@ export { MicrophoneVolume } from "./MicrophoneVolume";
 export { NoiseModelSelector } from "./NoiseModelSelector";
 export { TranscriptionModelSelector } from "./TranscriptionModelSelector";
 export { RecordingControls } from "./RecordingControls";
+export { AppSelector } from "./AppSelector";

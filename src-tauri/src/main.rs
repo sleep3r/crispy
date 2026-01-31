@@ -608,7 +608,7 @@ fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     recording::get_recordable_apps()
 }
 
-fn do_start_recording(state: &AppState) -> Result<(), String> {
+fn do_start_recording(state: &AppState, app_id: &str) -> Result<(), String> {
     let mut recording = state.recording.lock().unwrap();
 
     if recording.writer.lock().unwrap().is_some() {
@@ -635,6 +635,20 @@ fn do_start_recording(state: &AppState) -> Result<(), String> {
     recording.mic_buffer.lock().unwrap().clear();
     recording.app_buffer.lock().unwrap().clear();
 
+    // Start app audio capture if app is selected (not "none")
+    #[cfg(target_os = "macos")]
+    if !app_id.is_empty() && app_id != "none" {
+        match recording::start_app_audio_capture(app_id, recording.app_buffer.clone()) {
+            Ok(stream) => {
+                *recording.app_audio_stream.lock().unwrap() = Some(stream);
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to start app audio capture: {}", e);
+                // Continue with mic-only recording
+            }
+        }
+    }
+
     let handle = start_recording_worker(
         recording.mic_buffer.clone(),
         recording.app_buffer.clone(),
@@ -646,6 +660,17 @@ fn do_start_recording(state: &AppState) -> Result<(), String> {
 
 fn do_stop_recording(state: &AppState) -> Result<String, String> {
     RECORDING_ACTIVE.store(false, Ordering::SeqCst);
+
+    // Stop app audio capture if running
+    #[cfg(target_os = "macos")]
+    {
+        let recording = state.recording.lock().unwrap();
+        let stream_opt = recording.app_audio_stream.lock().unwrap().take();
+        drop(recording);
+        if let Some(stream) = stream_opt {
+            let _ = stream.stop_capture();
+        }
+    }
 
     let worker_handle = {
         let mut recording = state.recording.lock().unwrap();
@@ -675,9 +700,9 @@ fn do_stop_recording(state: &AppState) -> Result<String, String> {
 #[tauri::command]
 fn start_recording(
     state: tauri::State<AppState>,
-    _app_id: String,
+    app_id: String,
 ) -> Result<(), String> {
-    do_start_recording(state.inner())
+    do_start_recording(state.inner(), &app_id)
 }
 
 #[tauri::command]
@@ -947,7 +972,7 @@ fn start_recording_worker(
                 }
             } // mic_buf lock dropped here
 
-            // --- Pull app frame (or mirror mic when app audio missing) ---
+            // --- Pull app frame (or silence) ---
             let app_available = {
                 let app_buf = app_buffer.lock().unwrap();
                 app_buf.len()
@@ -958,9 +983,18 @@ fn start_recording_worker(
                     right_frame[i] = app_buf.pop_front().unwrap_or(0.0);
                 }
             } else {
-                // No app audio yet; record mic in both channels for stereo
-                right_frame.copy_from_slice(&left_frame);
+                // No app audio; use silence
+                for i in 0..frame_size {
+                    right_frame[i] = 0.0;
+                }
             } // app_buf lock dropped here
+
+            // --- Mix into dual-mono (L/R = mic + app) ---
+            for i in 0..frame_size {
+                let mixed = left_frame[i] + right_frame[i];
+                left_frame[i] = mixed;
+                right_frame[i] = mixed;
+            }
 
             // --- Write to WAV ---
             {

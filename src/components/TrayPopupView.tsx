@@ -2,8 +2,10 @@ import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Mic, Square, ExternalLink, Power } from "lucide-react";
+import { useSettings } from "../hooks/useSettings";
 
 export const TrayPopupView: React.FC = () => {
+  const { getSetting } = useSettings();
   const [recording, setRecording] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -24,7 +26,8 @@ export const TrayPopupView: React.FC = () => {
 
   const handleStart = async () => {
     try {
-      await invoke("start_recording", { appId: "" });
+      const selectedApp = getSetting("selected_recording_app") || "none";
+      await invoke("start_recording", { appId: selectedApp });
       setRecording(true);
     } catch {
       setRecording(false);
