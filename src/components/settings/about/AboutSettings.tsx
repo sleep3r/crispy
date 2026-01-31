@@ -36,7 +36,7 @@ export const AboutSettings: React.FC = () => {
         >
           <button
             type="button"
-            onClick={() => openUrl("https://github.com/yourusername/crispy")}
+            onClick={() => openUrl("https://github.com/sleep3r/crispy")}
             className="inline-flex items-center px-3 py-1.5 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors"
           >
             Open GitHub
