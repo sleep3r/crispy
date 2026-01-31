@@ -21,13 +21,13 @@ pub fn get_available_ns_models() -> Vec<NsModelInfo> {
         },
         NsModelInfo {
             id: "noisy".to_string(),
-            name: "Test noise".to_string(),
-            description: "Adds test noise (debug)".to_string(),
+            name: "Noisy".to_string(),
+            description: "Adds noise to output".to_string(),
         },
         NsModelInfo {
             id: "rnnnoise".to_string(),
             name: "RNN Noise".to_string(),
-            description: "RNNoise neural network denoiser (48 kHz)".to_string(),
+            description: "RNNoise neural network denoiser".to_string(),
         },
     ]
 }
