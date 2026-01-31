@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Send } from "lucide-react";
+import { Copy, Check, Send } from "lucide-react";
 
 const getPathFromQuery = (): string | null => {
   const params = new URLSearchParams(globalThis.location.search);
@@ -24,6 +24,7 @@ export const TranscriptionResultView: React.FC = () => {
   const [inputValue, setInputValue] = useState("");
   const [sending, setSending] = useState(false);
   const [llmModelName, setLlmModelName] = useState<string>("Assistant");
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recordingPathRef = useRef<string | null>(null);
 
@@ -210,6 +211,21 @@ export const TranscriptionResultView: React.FC = () => {
     }
   };
 
+  const handleCopy = async (content: string, index: number) => {
+    if (!content) return;
+    try {
+      if (!navigator?.clipboard?.writeText) {
+        console.error("Clipboard API is not available in this context.");
+        return;
+      }
+      await navigator.clipboard.writeText(content);
+      setCopiedIndex(index);
+      setTimeout(() => setCopiedIndex((current) => (current === index ? null : current)), 1500);
+    } catch (err) {
+      console.error("Failed to copy message:", err);
+    }
+  };
+
   const persistChatHistory = (nextMessages: ChatMessage[]) => {
     const path = recordingPathRef.current;
     if (!path) return;
@@ -260,8 +276,18 @@ export const TranscriptionResultView: React.FC = () => {
               {msg.name && (
                 <span className="text-xs font-medium text-mid-gray mb-1">{msg.name}</span>
               )}
-              <div className="rounded-lg rounded-tl-none bg-mid-gray/10 px-3 py-2 text-sm whitespace-pre-wrap break-words">
+              <div className="relative rounded-lg rounded-tl-none bg-mid-gray/10 px-3 py-2 text-sm whitespace-pre-wrap break-words">
                 {msg.content || (msg.streaming && "...")}
+                {msg.name && (
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(msg.content, i)}
+                    className="absolute top-1 right-1 rounded-md p-1 text-mid-gray hover:text-text hover:bg-mid-gray/20 transition-colors"
+                    title="Copy message"
+                  >
+                    {copiedIndex === i ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                )}
               </div>
             </div>
           ) : (
