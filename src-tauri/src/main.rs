@@ -14,6 +14,8 @@ mod window;
 mod system_input_volume;
 
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use app_state::AppState;
 use audio::AudioMonitorState;
@@ -77,10 +79,23 @@ fn main() {
                     } = event
                     {
                         let app = tray.app_handle().clone();
-                        let app_for_closure = app.clone();
-                        // AppKit window ops must run on main thread (avoids "foreign exception" crash)
-                        let _ = app.run_on_main_thread(move || {
-                            window::show_or_toggle_tray_popup(&app_for_closure);
+                        thread::spawn(move || {
+                            #[cfg(target_os = "macos")]
+                            {
+                                // Activate Finder without opening a new window
+                                let _ = std::process::Command::new("osascript")
+                                    .args([
+                                        "-e",
+                                        "tell application \"Finder\" to activate",
+                                    ])
+                                    .status();
+                                thread::sleep(Duration::from_millis(100));
+                            }
+                            let app_for_closure = app.clone();
+                            // AppKit window ops must run on main thread (avoids "foreign exception" crash)
+                            let _ = app.run_on_main_thread(move || {
+                                window::show_or_toggle_tray_popup(&app_for_closure);
+                            });
                         });
                     }
                 })
