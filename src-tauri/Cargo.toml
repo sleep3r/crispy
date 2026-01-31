@@ -35,10 +35,12 @@ ort-sys = "=2.0.0-rc.10"
 nnnoiseless = "0.5.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-screencapturekit = "1.5"
 coreaudio-sys = "0.2"
 objc2 = "0.6"
 objc2-app-kit = "0.3"
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+screencapturekit = "1.5"
 
 [profile.release]
 lto = true

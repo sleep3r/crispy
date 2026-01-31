@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use screencapturekit::stream::sc_stream::SCStream;
 
 /// Resample audio from one sample rate to another using linear interpolation
@@ -44,7 +44,7 @@ pub struct RecordingState {
     pub mic_buffer: Arc<Mutex<VecDeque<f32>>>,
     pub app_buffer: Arc<Mutex<VecDeque<f32>>>,
     pub worker: Option<std::thread::JoinHandle<()>>,
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     pub app_audio_stream: Arc<Mutex<Option<SCStream>>>,
 }
 
@@ -55,7 +55,7 @@ impl RecordingState {
             mic_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(SAMPLE_RATE * 10))),
             app_buffer: Arc::new(Mutex::new(VecDeque::with_capacity(SAMPLE_RATE * 10))),
             worker: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             app_audio_stream: Arc::new(Mutex::new(None)),
         }
     }
@@ -115,7 +115,7 @@ impl WavWriter {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     use screencapturekit::prelude::*;
     
@@ -157,7 +157,7 @@ pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     Ok(apps)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     Ok(vec![
         RecordableApp {
@@ -168,7 +168,7 @@ pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     ])
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 pub fn start_app_audio_capture(
     app_id: &str,
     app_buffer: Arc<Mutex<VecDeque<f32>>>,
@@ -359,6 +359,14 @@ pub fn start_app_audio_capture(
         .map_err(|e| format!("Failed to start capture: {:?}", e))?;
     
     Ok(stream)
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+pub fn start_app_audio_capture(
+    _app_id: &str,
+    _app_buffer: Arc<Mutex<VecDeque<f32>>>,
+) -> Result<(), String> {
+    Err("App audio capture is not supported on this platform".to_string())
 }
 
 #[cfg(not(target_os = "macos"))]

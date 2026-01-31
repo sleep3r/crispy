@@ -41,7 +41,7 @@ pub fn do_start_recording(state: &AppState, app_id: &str) -> Result<(), String> 
     recording.mic_buffer.lock().unwrap().clear();
     recording.app_buffer.lock().unwrap().clear();
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     if !app_id.is_empty() && app_id != "none" {
         match recording::start_app_audio_capture(app_id, recording.app_buffer.clone()) {
             Ok(stream) => {
@@ -65,7 +65,7 @@ pub fn do_start_recording(state: &AppState, app_id: &str) -> Result<(), String> 
 pub fn do_stop_recording(state: &AppState) -> Result<String, String> {
     RECORDING_ACTIVE.store(false, Ordering::SeqCst);
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         let recording = state.recording.lock().unwrap();
         let stream_opt = recording.app_audio_stream.lock().unwrap().take();
