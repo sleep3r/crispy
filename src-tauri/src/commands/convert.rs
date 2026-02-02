@@ -42,9 +42,18 @@ pub async fn convert_to_wav(app: AppHandle, input_path: String) -> Result<String
             .output();
 
         if check.is_err() {
-            return Err(
-                "FFmpeg is not installed. Please install FFmpeg to use the conversion feature.".to_string()
-            );
+            #[cfg(target_os = "windows")]
+            {
+                return Err(
+                    "FFmpeg is not installed. Press Win+R and run: winget install ffmpeg".to_string(),
+                );
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err(
+                    "FFmpeg is not installed. Please install FFmpeg to use the conversion feature.".to_string(),
+                );
+            }
         }
 
         // Run ffmpeg conversion

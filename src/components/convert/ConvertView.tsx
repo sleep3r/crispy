@@ -176,7 +176,7 @@ export const ConvertView: React.FC = () => {
             <ul className="list-disc list-inside space-y-1 ml-2">
               <li><span className="font-mono">macOS:</span> brew install ffmpeg</li>
               <li><span className="font-mono">Ubuntu/Debian:</span> sudo apt install ffmpeg</li>
-              <li><span className="font-mono">Windows:</span> Download from ffmpeg.org</li>
+              <li><span className="font-mono">Windows:</span> Win+R, then winget install ffmpeg</li>
             </ul>
           </div>
 
