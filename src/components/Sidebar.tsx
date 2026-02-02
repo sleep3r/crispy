@@ -1,12 +1,13 @@
 import React from "react";
-import { Mic, Info, History, Settings } from "lucide-react";
+import { Mic, Info, History, Settings, FileVideo } from "lucide-react";
 import CrispyTextLogo from "./icons/CrispyTextLogo";
 import { GeneralSettings } from "./settings/general/GeneralSettings";
 import { AboutSettings } from "./settings/about/AboutSettings";
 import { RecordingsHistory } from "./settings/recordings/RecordingsHistory";
 import { SettingsPage } from "./settings/SettingsPage";
+import { ConvertView } from "./convert/ConvertView";
 
-export type SidebarSection = "general" | "recordings" | "settings" | "about";
+export type SidebarSection = "general" | "recordings" | "convert" | "settings" | "about";
 
 interface SectionConfig {
   label: string;
@@ -24,6 +25,11 @@ export const SECTIONS_CONFIG: Record<SidebarSection, SectionConfig> = {
     label: "Recordings",
     icon: History,
     component: RecordingsHistory,
+  },
+  convert: {
+    label: "Convert",
+    icon: FileVideo,
+    component: ConvertView,
   },
   settings: {
     label: "Settings",

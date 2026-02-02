@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Trash2, FileText, Loader2, ExternalLink } from "lucide-react";
@@ -209,16 +209,6 @@ interface RecordingEntryProps {
   onRename: () => void;
 }
 
-function base64ToBlobUrl(base64: string, mimeType: string): string {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: mimeType });
-  return URL.createObjectURL(blob);
-}
-
 interface TranscriptionStatusEvent {
   recording_path: string;
   status: string;
@@ -233,7 +223,6 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   onRename,
 }) => {
   const [audioUrl, setAudioUrl] = useState<string>("");
-  const objectUrlRef = useRef<string | null>(null);
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>("idle");
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [hasResult, setHasResult] = useState(false);
@@ -290,30 +279,7 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   }, [recording.path]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    invoke<string>("read_recording_file", { path: recording.path })
-      .then((base64) => {
-        if (cancelled) return;
-        if (objectUrlRef.current) {
-          URL.revokeObjectURL(objectUrlRef.current);
-          objectUrlRef.current = null;
-        }
-        const url = base64ToBlobUrl(base64, "audio/wav");
-        objectUrlRef.current = url;
-        setAudioUrl(url);
-      })
-      .catch((err) => {
-        if (!cancelled) console.error("Failed to load recording for playback:", err);
-      });
-
-    return () => {
-      cancelled = true;
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
-    };
+    setAudioUrl(convertFileSrc(recording.path));
   }, [recording.path]);
 
   const startTranscription = async () => {

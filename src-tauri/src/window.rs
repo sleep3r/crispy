@@ -56,8 +56,10 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
                 configure_popup_for_fullscreen(&window);
             }
             let _ = window.show();
-            // Don't force focus — reduces switching out of fullscreen
-            // let _ = window.set_focus();
+            // macOS: don't force focus (reduces switching out of fullscreen)
+            // Windows/Linux: force focus so click-outside triggers blur and hides the tray.
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.set_focus();
             #[cfg(target_os = "macos")]
             let _ = window.move_window(Position::TrayBottomCenter);
             #[cfg(not(target_os = "macos"))]
@@ -82,7 +84,8 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
             configure_popup_for_fullscreen(&window);
         }
         let _ = window.show();
-        // let _ = window.set_focus();
+        #[cfg(not(target_os = "macos"))]
+        let _ = window.set_focus();
         #[cfg(target_os = "macos")]
         let _ = window.move_window(Position::TrayBottomCenter);
         #[cfg(not(target_os = "macos"))]

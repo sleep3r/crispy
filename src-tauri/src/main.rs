@@ -202,6 +202,8 @@ fn main() {
             commands::transcription::set_transcription_chat_history,
             commands::settings::get_app_settings,
             commands::settings::set_app_setting,
+            commands::convert::convert_to_wav,
+            commands::convert::check_ffmpeg,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

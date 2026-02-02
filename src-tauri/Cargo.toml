@@ -1,6 +1,6 @@
 [package]
 name = "Crispy"
-version = "0.2.1"
+version = "0.3.0"
 description = "Crispy"
 authors = ["you"]
 edition = "2021"
@@ -9,7 +9,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
