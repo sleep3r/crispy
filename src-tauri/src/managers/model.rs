@@ -9,7 +9,8 @@ use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tar::Archive;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -49,6 +50,7 @@ pub struct ModelManager {
     app_handle: AppHandle,
     models_dir: PathBuf,
     available_models: Mutex<HashMap<String, ModelInfo>>,
+    download_cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl ModelManager {
@@ -202,6 +204,7 @@ impl ModelManager {
             app_handle: app_handle.clone(),
             models_dir,
             available_models: Mutex::new(available_models),
+            download_cancels: Mutex::new(HashMap::new()),
         };
 
         manager.migrate_bundled_models()?;
@@ -276,6 +279,19 @@ impl ModelManager {
     }
 
     pub async fn download_model(&self, model_id: &str) -> Result<()> {
+        struct CancelGuard<'a> {
+            cancels: &'a Mutex<HashMap<String, Arc<AtomicBool>>>,
+            model_id: String,
+        }
+
+        impl<'a> Drop for CancelGuard<'a> {
+            fn drop(&mut self) {
+                if let Ok(mut cancels) = self.cancels.lock() {
+                    cancels.remove(&self.model_id);
+                }
+            }
+        }
+
         let model_info = {
             let models = self.available_models.lock().unwrap();
             models.get(model_id).cloned()
@@ -302,6 +318,16 @@ impl ModelManager {
             partial_path.metadata()?.len()
         } else {
             0
+        };
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        {
+            let mut cancels = self.download_cancels.lock().unwrap();
+            cancels.insert(model_id.to_string(), cancel_flag.clone());
+        }
+        let _cancel_guard = CancelGuard {
+            cancels: &self.download_cancels,
+            model_id: model_id.to_string(),
         };
 
         {
@@ -370,6 +396,14 @@ impl ModelManager {
         );
 
         while let Some(chunk) = stream.next().await {
+            if cancel_flag.load(Ordering::SeqCst) {
+                let mut models = self.available_models.lock().unwrap();
+                if let Some(model) = models.get_mut(model_id) {
+                    model.is_downloading = false;
+                }
+                self.update_download_status()?;
+                return Ok(());
+            }
             let chunk = chunk.map_err(|e| {
                 let mut models = self.available_models.lock().unwrap();
                 if let Some(model) = models.get_mut(model_id) {
@@ -398,6 +432,15 @@ impl ModelManager {
         file.flush()?;
         drop(file);
 
+        if cancel_flag.load(Ordering::SeqCst) {
+            let mut models = self.available_models.lock().unwrap();
+            if let Some(model) = models.get_mut(model_id) {
+                model.is_downloading = false;
+            }
+            self.update_download_status()?;
+            return Ok(());
+        }
+
         if total_size > 0 {
             let actual_size = partial_path.metadata()?.len();
             if actual_size != total_size {
@@ -415,6 +458,14 @@ impl ModelManager {
         }
 
         if model_info.is_directory {
+            if cancel_flag.load(Ordering::SeqCst) {
+                let mut models = self.available_models.lock().unwrap();
+                if let Some(model) = models.get_mut(model_id) {
+                    model.is_downloading = false;
+                }
+                self.update_download_status()?;
+                return Ok(());
+            }
             let _ = self.app_handle.emit("model-extraction-started", model_id);
             let temp_extract_dir = self
                 .models_dir
@@ -529,6 +580,15 @@ impl ModelManager {
         let _ = self
             .get_model_info(model_id)
             .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
+        if let Some(flag) = self
+            .download_cancels
+            .lock()
+            .unwrap()
+            .get(model_id)
+            .cloned()
+        {
+            flag.store(true, Ordering::SeqCst);
+        }
         let mut models = self.available_models.lock().unwrap();
         if let Some(model) = models.get_mut(model_id) {
             model.is_downloading = false;

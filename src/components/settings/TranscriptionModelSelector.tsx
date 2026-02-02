@@ -33,9 +33,11 @@ const getStatusMeta = (
 
 const getDownloadLabel = (
   progress: { percentage: number } | undefined,
-  isExtracting: boolean
+  isExtracting: boolean,
+  isPending: boolean
 ) => {
   if (progress) return `${Math.round(progress.percentage)}%`;
+  if (isPending) return "Starting…";
   if (isExtracting) return "Extracting…";
   return "Download";
 };
@@ -57,6 +59,7 @@ export const TranscriptionModelSelector: React.FC<{ grouped?: boolean }> = ({
     modelError,
     extractingModels,
     downloadStats,
+    pendingDownloads,
     cancelDownload,
   } = useTranscriptionModels();
   const [isOpen, setIsOpen] = useState(false);
@@ -85,7 +88,7 @@ export const TranscriptionModelSelector: React.FC<{ grouped?: boolean }> = ({
     modelId: string
   ) => {
     e.stopPropagation();
-    if (modelId in downloadProgress) return;
+    if (modelId in downloadProgress || modelId in pendingDownloads) return;
     try {
       await downloadModel(modelId);
     } catch (err) {
@@ -191,6 +194,7 @@ export const TranscriptionModelSelector: React.FC<{ grouped?: boolean }> = ({
               const progress = downloadProgress[model.id];
               const isDownloading = Boolean(progress);
               const isExtracting = Boolean(extractingModels[model.id]);
+              const isPending = Boolean(pendingDownloads[model.id]);
               const stats = downloadStats[model.id];
               return (
                 <li
@@ -227,12 +231,12 @@ export const TranscriptionModelSelector: React.FC<{ grouped?: boolean }> = ({
                   <button
                     type="button"
                     onClick={(e) => handleDownloadClick(e, model.id)}
-                    disabled={isDownloading}
+                    disabled={isDownloading || isPending}
                     className="shrink-0 text-xs font-medium text-logo-primary hover:underline disabled:opacity-60 disabled:no-underline"
                   >
-                    {getDownloadLabel(progress, isExtracting)}
+                    {getDownloadLabel(progress, isExtracting, isPending)}
                   </button>
-                  {isDownloading && (
+                  {(isDownloading || isPending) && (
                     <button
                       type="button"
                       onClick={(e) => handleCancelClick(e, model.id)}

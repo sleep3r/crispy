@@ -1,4 +1,6 @@
 use std::collections::VecDeque;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,6 +14,9 @@ use crate::app_state::AppState;
 use crate::recording;
 
 static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn recordings_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = crate::paths::recordings_dir(app)?;
@@ -232,10 +237,14 @@ pub fn open_recordings_dir(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to open directory: {}", e))?;
 
     #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer")
-        .arg(&recordings_dir)
-        .spawn()
-        .map_err(|e| format!("Failed to open directory: {}", e))?;
+    {
+        let mut command = std::process::Command::new("explorer");
+        command.arg(&recordings_dir);
+        command
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to open directory: {}", e))?;
+    }
 
     Ok(())
 }
@@ -255,10 +264,14 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to open URL: {}", e))?;
 
     #[cfg(target_os = "windows")]
-    std::process::Command::new("cmd")
-        .args(["/C", "start", &url])
-        .spawn()
-        .map_err(|e| format!("Failed to open URL: {}", e))?;
+    {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", "", &url]);
+        command
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
 
     Ok(())
 }

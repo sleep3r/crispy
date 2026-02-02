@@ -31,9 +31,11 @@ const getStatusMeta = (status: string, error: string | null) => {
 
 const getDownloadLabel = (
   progress: { percentage: number } | undefined,
-  isExtracting: boolean
+  isExtracting: boolean,
+  isPending: boolean
 ) => {
   if (progress) return `${Math.round(progress.percentage)}%`;
+  if (isPending) return "Starting…";
   if (isExtracting) return "Extracting…";
   return "Download";
 };
@@ -66,6 +68,7 @@ export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
     deleteModel,
     downloadProgress,
     downloadStats,
+    pendingDownloads,
     cancelDownload,
   } = useTranscriptionModels();
   const isNoise = currentSection === "general";
@@ -119,7 +122,7 @@ export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    if (modelId in downloadProgress) return;
+    if (modelId in downloadProgress || modelId in pendingDownloads) return;
     try {
       await downloadModel(modelId);
     } catch (err) {
@@ -300,6 +303,7 @@ export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
                 .map((model) => {
                   const progress = downloadProgress[model.id];
                   const isExtracting = Boolean(extractingModels[model.id]);
+                  const isPending = Boolean(pendingDownloads[model.id]);
                   const stats = downloadStats[model.id];
                   return (
                     <button
@@ -327,9 +331,9 @@ export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
                         </div>
                         <div className="flex items-center gap-2">
                           <div className="text-xs text-logo-primary tabular-nums">
-                            {getDownloadLabel(progress, isExtracting)}
+                            {getDownloadLabel(progress, isExtracting, isPending)}
                           </div>
-                          {progress && (
+                          {(progress || isPending) && (
                             <button
                               onClick={(e) => handleCancelClick(e, model.id)}
                               className="text-[11px] text-red-400 hover:text-red-300 px-1 py-0.5 rounded hover:bg-red-500/10 transition-colors"

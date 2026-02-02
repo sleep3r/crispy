@@ -26,6 +26,14 @@ export const ConvertView: React.FC = () => {
     }
   };
 
+  const handleOpenFfmpegSite = async () => {
+    try {
+      await invoke("open_url", { url: "https://www.ffmpeg.org/download.html" });
+    } catch (err) {
+      console.error("Failed to open FFmpeg site:", err);
+    }
+  };
+
   const addConversionJob = useCallback(async (filePath: string) => {
     const filename = filePath.split(/[/\\]/).pop() || "unknown";
     const jobId = `${Date.now()}-${Math.random()}`;
@@ -181,15 +189,14 @@ export const ConvertView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3">
-            <a
-              href="https://www.ffmpeg.org/download.html"
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={handleOpenFfmpegSite}
               className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 font-medium"
             >
               Download FFmpeg
               <span className="text-[10px]">↗</span>
-            </a>
+            </button>
             <button
               type="button"
               onClick={checkFFmpeg}

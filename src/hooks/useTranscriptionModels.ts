@@ -87,6 +87,9 @@ export function useTranscriptionModels() {
   const [downloadProgress, setDownloadProgress] = useState<
     Record<string, DownloadProgressPayload>
   >({});
+  const [pendingDownloads, setPendingDownloads] = useState<Record<string, true>>(
+    {}
+  );
   const [downloadStats, setDownloadStats] = useState<
     Record<string, DownloadStats>
   >({});
@@ -152,6 +155,12 @@ export function useTranscriptionModels() {
   const handleDownloadProgress = useCallback(
     (event: { payload: DownloadProgressPayload }) => {
       const now = Date.now();
+      setPendingDownloads((prev) => {
+        if (!(event.payload.model_id in prev)) return prev;
+        const next = { ...prev };
+        delete next[event.payload.model_id];
+        return next;
+      });
       setDownloadProgress((prev) => ({
         ...prev,
         [event.payload.model_id]: event.payload,
@@ -194,6 +203,7 @@ export function useTranscriptionModels() {
   );
 
   const handleDownloadComplete = useCallback(() => {
+    setPendingDownloads({});
     setDownloadProgress((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((k) => delete next[k]);
@@ -209,6 +219,24 @@ export function useTranscriptionModels() {
   }, [refresh, currentModelId]);
 
   const handleExtractStart = useCallback((event: { payload: string }) => {
+    setPendingDownloads((prev) => {
+      if (!(event.payload in prev)) return prev;
+      const next = { ...prev };
+      delete next[event.payload];
+      return next;
+    });
+    setDownloadProgress((prev) => {
+      if (!(event.payload in prev)) return prev;
+      const next = { ...prev };
+      delete next[event.payload];
+      return next;
+    });
+    setDownloadStats((prev) => {
+      if (!(event.payload in prev)) return prev;
+      const next = { ...prev };
+      delete next[event.payload];
+      return next;
+    });
     setExtractingModels((prev) => ({ ...prev, [event.payload]: true }));
     setModelStatus("extracting");
   }, []);
@@ -307,9 +335,16 @@ export function useTranscriptionModels() {
 
   const downloadModel = useCallback(
     async (modelId: string) => {
+      setPendingDownloads((prev) => ({ ...prev, [modelId]: true }));
       try {
         await invoke("download_model", { modelId });
       } catch (e) {
+        setPendingDownloads((prev) => {
+          if (!(modelId in prev)) return prev;
+          const next = { ...prev };
+          delete next[modelId];
+          return next;
+        });
         console.error("download_model failed:", e);
         throw e;
       }
@@ -333,6 +368,12 @@ export function useTranscriptionModels() {
   const cancelDownload = useCallback(async (modelId: string) => {
     try {
       await invoke("cancel_download", { modelId });
+      setPendingDownloads((prev) => {
+        if (!(modelId in prev)) return prev;
+        const next = { ...prev };
+        delete next[modelId];
+        return next;
+      });
       setDownloadProgress((prev) => {
         const next = { ...prev };
         delete next[modelId];
@@ -383,6 +424,7 @@ export function useTranscriptionModels() {
     deleteModel,
     downloadProgress,
     downloadStats,
+    pendingDownloads,
     cancelDownload,
     downloadSummary: {
       active: progressValues.length > 0,
