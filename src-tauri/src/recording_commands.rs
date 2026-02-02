@@ -60,6 +60,19 @@ pub fn do_start_recording(
         }
     }
 
+    #[cfg(target_os = "windows")]
+    if !app_id.is_empty() && app_id != "none" {
+        match recording::start_app_audio_capture(app_id, recording.app_buffer.clone()) {
+            Ok(_) => {
+                *recording.app_audio_active.lock().unwrap() = true;
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to start app audio capture: {}", e);
+                // Continue with mic-only recording
+            }
+        }
+    }
+
     let handle = start_recording_worker(
         recording.mic_buffer.clone(),
         recording.app_buffer.clone(),
@@ -81,6 +94,13 @@ pub fn do_stop_recording(state: &AppState) -> Result<String, String> {
         if let Some(stream) = stream_opt {
             let _ = stream.stop_capture();
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let recording = state.recording.lock().unwrap();
+        *recording.app_audio_active.lock().unwrap() = false;
+        recording.app_buffer.lock().unwrap().clear();
     }
 
     let worker_handle = {

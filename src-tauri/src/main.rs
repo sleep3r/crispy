@@ -14,6 +14,9 @@ mod window;
 #[cfg(target_os = "macos")]
 mod system_input_volume;
 
+#[cfg(target_os = "windows")]
+mod windows_audio;
+
 use std::sync::{Arc, Mutex};
 use std::thread;
 #[cfg(target_os = "macos")]

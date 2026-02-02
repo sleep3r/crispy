@@ -154,6 +154,11 @@ export const GeneralSettings: React.FC = () => {
         description="Record meetings with processed mic + app audio."
       >
         <AppSelector grouped />
+        {currentPlatform === "windows" && (
+          <div className="px-3 py-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs text-yellow-800">
+            <strong>Note:</strong> App audio capture on Windows is coming soon. For now, only microphone audio will be recorded.
+          </div>
+        )}
         <RecordingControls />
       </SettingsGroup>
     </div>

@@ -46,6 +46,8 @@ pub struct RecordingState {
     pub worker: Option<std::thread::JoinHandle<()>>,
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     pub app_audio_stream: Arc<Mutex<Option<SCStream>>>,
+    #[cfg(target_os = "windows")]
+    pub app_audio_active: Arc<Mutex<bool>>,
 }
 
 impl RecordingState {
@@ -57,6 +59,8 @@ impl RecordingState {
             worker: None,
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             app_audio_stream: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "windows")]
+            app_audio_active: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -157,7 +161,12 @@ pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     Ok(apps)
 }
 
-#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(target_os = "windows")]
+pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
+    crate::windows_audio::get_recordable_apps_windows()
+}
+
+#[cfg(not(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "windows")))]
 pub fn get_recordable_apps() -> Result<Vec<RecordableApp>, String> {
     Ok(vec![
         RecordableApp {
@@ -361,7 +370,15 @@ pub fn start_app_audio_capture(
     Ok(stream)
 }
 
-#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(target_os = "windows")]
+pub fn start_app_audio_capture(
+    app_id: &str,
+    app_buffer: Arc<Mutex<VecDeque<f32>>>,
+) -> Result<(), String> {
+    crate::windows_audio::start_app_audio_capture_windows(app_id, app_buffer)
+}
+
+#[cfg(not(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "windows")))]
 pub fn start_app_audio_capture(
     _app_id: &str,
     _app_buffer: Arc<Mutex<VecDeque<f32>>>,
