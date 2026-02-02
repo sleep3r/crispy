@@ -4,7 +4,7 @@ use crate::commands::models::SelectedModelState;
 use crate::managers::transcription::{
     load_transcription_chat_history, load_transcription_metadata, load_transcription_result,
     save_transcription_chat_history, save_transcription_metadata, save_transcription_result,
-    wav_to_16k_mono_f32, ChatHistoryMessage, TranscriptionManager,
+    ChatHistoryMessage, TranscriptionManager, TranscriptionState,
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -16,16 +16,32 @@ use async_openai::{
     Client,
 };
 use futures_util::StreamExt;
+use hound::WavReader;
+use rubato::{FftFixedIn, Resampler};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use std::time::Instant;
 
 #[derive(Clone, Serialize)]
 pub struct TranscriptionStatusEvent {
     pub recording_path: String,
     pub status: String, // "started" | "completed" | "error"
     pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TranscriptionPhaseEvent {
+    pub recording_path: String,
+    pub phase: String, // "loading-model" | "preparing-audio" | "transcribing"
+}
+
+#[derive(Clone, Serialize)]
+pub struct TranscriptionProgressEvent {
+    pub recording_path: String,
+    pub progress: f32, // 0.0 - 1.0
+    pub eta_seconds: Option<u64>,
 }
 
 #[derive(Clone, Serialize)]
@@ -40,6 +56,15 @@ pub async fn start_transcription(
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     selected_model_state: State<'_, SelectedModelState>,
 ) -> Result<(), String> {
+    transcription_manager.inner().set_state(
+        &recording_path,
+        TranscriptionState {
+            status: "started".to_string(),
+            progress: 0.0,
+            eta_seconds: None,
+            phase: Some("preparing-audio".to_string()),
+        },
+    );
     let _ = app.emit(
         "transcription-status",
         TranscriptionStatusEvent {
@@ -60,6 +85,15 @@ pub async fn start_transcription(
             Ok(()) => ("completed".to_string(), None),
             Err(e) => ("error".to_string(), Some(e.to_string())),
         };
+        tm.set_state(
+            &path_clone,
+            TranscriptionState {
+                status: status.clone(),
+                progress: if status == "completed" { 1.0 } else { 0.0 },
+                eta_seconds: if status == "completed" { Some(0) } else { None },
+                phase: None,
+            },
+        );
         let _ = app_clone.emit(
             "transcription-status",
             TranscriptionStatusEvent {
@@ -87,18 +121,229 @@ fn run_transcription(
         return Err("No transcription model selected. Choose a model in Settings.".into());
     }
 
-    let audio = wav_to_16k_mono_f32(Path::new(recording_path))?;
-    if audio.is_empty() {
+    let _ = app.emit(
+        "transcription-phase",
+        TranscriptionPhaseEvent {
+            recording_path: recording_path.to_string(),
+            phase: "preparing-audio".to_string(),
+        },
+    );
+    tm.set_state(
+        recording_path,
+        TranscriptionState {
+            status: "started".to_string(),
+            progress: 0.0,
+            eta_seconds: None,
+            phase: Some("preparing-audio".to_string()),
+        },
+    );
+
+    let current = tm.get_current_model();
+    if current.as_deref() != Some(model_id.as_str()) {
+        let _ = app.emit(
+            "transcription-phase",
+            TranscriptionPhaseEvent {
+                recording_path: recording_path.to_string(),
+                phase: "loading-model".to_string(),
+            },
+        );
+        tm.set_state(
+            recording_path,
+            TranscriptionState {
+                status: "started".to_string(),
+                progress: 0.0,
+                eta_seconds: None,
+                phase: Some("loading-model".to_string()),
+            },
+        );
+        tm.load_model(&model_id)?;
+    }
+
+    const TARGET_SAMPLE_RATE: usize = 16000;
+    const RESAMPLER_CHUNK: usize = 1024;
+    const TRANSCRIBE_CHUNK_SECONDS: usize = 30;
+    let transcribe_chunk_samples = TRANSCRIBE_CHUNK_SECONDS * TARGET_SAMPLE_RATE;
+
+    let mut reader = WavReader::open(Path::new(recording_path))?;
+    let spec = reader.spec();
+    let sample_rate_in = spec.sample_rate as usize;
+    let channels = spec.channels as usize;
+
+    let total_input_samples = reader.len() as usize;
+    let total_frames_in = if channels > 0 {
+        total_input_samples / channels
+    } else {
+        0
+    };
+    if total_frames_in == 0 {
         save_transcription_result(app, recording_path, "")?;
         save_transcription_metadata(app, recording_path, &model_id)?;
         return Ok(());
     }
 
-    let current = tm.get_current_model();
-    if current.as_deref() != Some(model_id.as_str()) {
-        tm.load_model(&model_id)?;
+    let total_seconds = total_frames_in as f32 / sample_rate_in as f32;
+    let total_out_samples = (total_seconds * TARGET_SAMPLE_RATE as f32).round() as usize;
+
+    let mut resampler = if sample_rate_in == TARGET_SAMPLE_RATE {
+        None
+    } else {
+        Some(FftFixedIn::<f32>::new(
+            sample_rate_in,
+            TARGET_SAMPLE_RATE,
+            RESAMPLER_CHUNK,
+            1,
+            1,
+        )?)
+    };
+
+    let mut input_mono: Vec<f32> = Vec::with_capacity(RESAMPLER_CHUNK);
+    let mut pending_16k: Vec<f32> = Vec::with_capacity(transcribe_chunk_samples);
+    let mut processed_out_samples = 0usize;
+    let start = Instant::now();
+    let mut parts: Vec<String> = Vec::new();
+    let mut transcription_started = false;
+
+    let emit_progress = |app: &AppHandle,
+                         tm: &TranscriptionManager,
+                         recording_path: &str,
+                         progress: f32,
+                         eta_seconds: Option<u64>| {
+        tm.set_state(
+            recording_path,
+            TranscriptionState {
+                status: "transcribing".to_string(),
+                progress,
+                eta_seconds,
+                phase: Some("transcribing".to_string()),
+            },
+        );
+        let _ = app.emit(
+            "transcription-progress",
+            TranscriptionProgressEvent {
+                recording_path: recording_path.to_string(),
+                progress,
+                eta_seconds,
+            },
+        );
+    };
+
+    let mut process_pending = |pending_16k: &mut Vec<f32>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        while pending_16k.len() >= transcribe_chunk_samples {
+            let chunk: Vec<f32> = pending_16k.drain(..transcribe_chunk_samples).collect();
+            if !transcription_started {
+                transcription_started = true;
+                let _ = app.emit(
+                    "transcription-phase",
+                    TranscriptionPhaseEvent {
+                        recording_path: recording_path.to_string(),
+                        phase: "transcribing".to_string(),
+                    },
+                );
+            }
+            let chunk_text = tm.transcribe(chunk)?;
+            if !chunk_text.trim().is_empty() {
+                parts.push(chunk_text);
+            }
+            processed_out_samples = processed_out_samples.saturating_add(transcribe_chunk_samples);
+            let progress = if total_out_samples > 0 {
+                (processed_out_samples as f32 / total_out_samples as f32).min(1.0)
+            } else {
+                0.0
+            };
+            let processed_seconds = processed_out_samples as f32 / TARGET_SAMPLE_RATE as f32;
+            let eta_seconds = if processed_seconds > 0.5 {
+                let elapsed = start.elapsed().as_secs_f32();
+                let rate = elapsed / processed_seconds;
+                let remaining_seconds = (total_seconds - processed_seconds).max(0.0) * rate;
+                Some(remaining_seconds.round() as u64)
+            } else {
+                None
+            };
+            emit_progress(app, tm, recording_path, progress, eta_seconds);
+        }
+        Ok(())
+    };
+
+    let mut channel_index = 0usize;
+    match spec.sample_format {
+        hound::SampleFormat::Int => {
+            let max_val = 32768.0f32;
+            for s in reader.samples::<i16>() {
+                let s = s?;
+                if channel_index == 0 {
+                    input_mono.push(s as f32 / max_val);
+                }
+                channel_index = (channel_index + 1) % channels.max(1);
+                if input_mono.len() >= RESAMPLER_CHUNK {
+                    if let Some(resampler) = resampler.as_mut() {
+                        let out_chunk = resampler.process(&[&input_mono[..RESAMPLER_CHUNK]], None)?;
+                        pending_16k.extend_from_slice(&out_chunk[0]);
+                    } else {
+                        pending_16k.extend_from_slice(&input_mono[..RESAMPLER_CHUNK]);
+                    }
+                    input_mono.clear();
+                    process_pending(&mut pending_16k)?;
+                }
+            }
+        }
+        hound::SampleFormat::Float => {
+            for s in reader.samples::<f32>() {
+                let s = s?;
+                if channel_index == 0 {
+                    input_mono.push(s);
+                }
+                channel_index = (channel_index + 1) % channels.max(1);
+                if input_mono.len() >= RESAMPLER_CHUNK {
+                    if let Some(resampler) = resampler.as_mut() {
+                        let out_chunk = resampler.process(&[&input_mono[..RESAMPLER_CHUNK]], None)?;
+                        pending_16k.extend_from_slice(&out_chunk[0]);
+                    } else {
+                        pending_16k.extend_from_slice(&input_mono[..RESAMPLER_CHUNK]);
+                    }
+                    input_mono.clear();
+                    process_pending(&mut pending_16k)?;
+                }
+            }
+        }
     }
-    let text = tm.transcribe(audio)?;
+
+    if !input_mono.is_empty() {
+        if let Some(resampler) = resampler.as_mut() {
+            let mut pad = input_mono;
+            pad.resize(RESAMPLER_CHUNK, 0.0);
+            let out_chunk = resampler.process(&[&pad], None)?;
+            pending_16k.extend_from_slice(&out_chunk[0]);
+        } else {
+            pending_16k.extend_from_slice(&input_mono);
+        }
+        process_pending(&mut pending_16k)?;
+    }
+
+    if !pending_16k.is_empty() {
+        if !transcription_started {
+            let _ = app.emit(
+                "transcription-phase",
+                TranscriptionPhaseEvent {
+                    recording_path: recording_path.to_string(),
+                    phase: "transcribing".to_string(),
+                },
+            );
+        }
+        let chunk: Vec<f32> = pending_16k.drain(..).collect();
+        let chunk_text = tm.transcribe(chunk.clone())?;
+        if !chunk_text.trim().is_empty() {
+            parts.push(chunk_text);
+        }
+        processed_out_samples = processed_out_samples.saturating_add(chunk.len());
+        let progress = if total_out_samples > 0 {
+            (processed_out_samples as f32 / total_out_samples as f32).min(1.0)
+        } else {
+            1.0
+        };
+        emit_progress(app, tm, recording_path, progress, Some(0));
+    }
+
+    let text = parts.join("\n");
     save_transcription_result(app, recording_path, &text)?;
     save_transcription_metadata(app, recording_path, &model_id)?;
     Ok(())
@@ -118,6 +363,14 @@ pub async fn get_transcription_model(
     recording_path: String,
 ) -> Result<Option<String>, String> {
     load_transcription_metadata(&app, &recording_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_transcription_state(
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    recording_path: String,
+) -> Result<Option<TranscriptionState>, String> {
+    Ok(transcription_manager.inner().get_state(&recording_path))
 }
 
 #[tauri::command]

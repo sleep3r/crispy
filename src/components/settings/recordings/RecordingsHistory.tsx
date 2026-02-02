@@ -215,6 +215,24 @@ interface TranscriptionStatusEvent {
   error?: string | null;
 }
 
+interface TranscriptionProgressEvent {
+  recording_path: string;
+  progress: number;
+  eta_seconds?: number | null;
+}
+
+interface TranscriptionPhaseEvent {
+  recording_path: string;
+  phase: string;
+}
+
+interface TranscriptionStateDto {
+  status: string;
+  progress: number;
+  eta_seconds?: number | null;
+  phase?: string | null;
+}
+
 const RecordingEntry: React.FC<RecordingEntryProps> = ({
   recording,
   isActive,
@@ -226,6 +244,9 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>("idle");
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [hasResult, setHasResult] = useState(false);
+  const [transcriptionProgress, setTranscriptionProgress] = useState<number>(0);
+  const [transcriptionEtaSeconds, setTranscriptionEtaSeconds] = useState<number | null>(null);
+  const [transcriptionPhase, setTranscriptionPhase] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editName, setEditName] = useState(nameWithoutExtension(recording.name));
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -255,6 +276,35 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   }, [recording.path, transcriptionStatus]);
 
   useEffect(() => {
+    let cancelled = false;
+    invoke<TranscriptionStateDto | null>("get_transcription_state", { recordingPath: recording.path })
+      .then((state) => {
+        if (cancelled || !state) return;
+        if (state.status === "completed") {
+          setTranscriptionStatus("completed");
+          setHasResult(true);
+          setTranscriptionProgress(1);
+          setTranscriptionEtaSeconds(0);
+          setTranscriptionPhase(null);
+        } else if (state.status === "error") {
+          setTranscriptionStatus("error");
+          setTranscriptionPhase(null);
+        } else if (state.status === "started" || state.status === "transcribing") {
+          setTranscriptionStatus("transcribing");
+          setTranscriptionProgress(state.progress ?? 0);
+          setTranscriptionEtaSeconds(
+            typeof state.eta_seconds === "number" ? state.eta_seconds : null
+          );
+          setTranscriptionPhase(state.phase ?? null);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [recording.path]);
+
+  useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<TranscriptionStatusEvent>("transcription-status", (event) => {
       if (event.payload.recording_path !== recording.path) return;
@@ -262,14 +312,50 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
       if (s === "started") {
         setTranscriptionStatus("transcribing");
         setTranscriptionError(null);
+        setTranscriptionProgress(0);
+        setTranscriptionEtaSeconds(null);
+        setTranscriptionPhase("preparing-audio");
       } else if (s === "completed") {
         setTranscriptionStatus("completed");
         setHasResult(true);
         setTranscriptionError(null);
+        setTranscriptionProgress(1);
+        setTranscriptionEtaSeconds(0);
+        setTranscriptionPhase(null);
       } else if (s === "error") {
         setTranscriptionStatus("error");
         setTranscriptionError(event.payload.error ?? "Transcription failed");
+        setTranscriptionPhase(null);
       }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [recording.path]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<TranscriptionProgressEvent>("transcription-progress", (event) => {
+      if (event.payload.recording_path !== recording.path) return;
+      setTranscriptionProgress(event.payload.progress ?? 0);
+      if (typeof event.payload.eta_seconds === "number") {
+        setTranscriptionEtaSeconds(event.payload.eta_seconds);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [recording.path]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<TranscriptionPhaseEvent>("transcription-phase", (event) => {
+      if (event.payload.recording_path !== recording.path) return;
+      setTranscriptionPhase(event.payload.phase);
     }).then((fn) => {
       unlisten = fn;
     });
@@ -285,6 +371,9 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   const startTranscription = async () => {
     setTranscriptionStatus("transcribing");
     setTranscriptionError(null);
+    setTranscriptionProgress(0);
+    setTranscriptionEtaSeconds(null);
+    setTranscriptionPhase("preparing-audio");
     try {
       await invoke("start_transcription", { recordingPath: recording.path });
     } catch (err) {
@@ -370,6 +459,11 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
               <FileText size={16} />
             )}
           </button>
+          {transcriptionStatus === "transcribing" && (
+            <div className="text-[11px] text-mid-gray min-w-[88px] text-right">
+              {formatEta(transcriptionEtaSeconds, transcriptionProgress, transcriptionPhase)}
+            </div>
+          )}
           {(hasResult || transcriptionStatus === "completed") && (
             <button
               type="button"
@@ -410,3 +504,19 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
     </div>
   );
 };
+
+function formatEta(etaSeconds: number | null, progress: number, phase: string | null): string {
+  if (etaSeconds === null || Number.isNaN(etaSeconds)) {
+    if (progress > 0) return `${Math.round(progress * 100)}%`;
+    if (phase === "loading-model") return "Loading model...";
+    if (phase === "preparing-audio") return "Preparing audio...";
+    if (phase === "transcribing") return "Estimating...";
+    return "Estimating...";
+  }
+  const clamped = Math.max(0, Math.floor(etaSeconds));
+  const minutes = Math.floor(clamped / 60);
+  const seconds = clamped % 60;
+  const time = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
+  return `${time} left ${pct}%`;
+}

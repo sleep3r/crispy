@@ -193,6 +193,7 @@ fn main() {
             commands::transcription::start_transcription,
             commands::transcription::get_transcription_result,
             commands::transcription::get_transcription_model,
+            commands::transcription::get_transcription_state,
             commands::transcription::open_transcription_window,
             commands::transcription::has_transcription_result,
             commands::transcription::get_llm_settings,

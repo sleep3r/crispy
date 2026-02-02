@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
@@ -15,6 +15,7 @@ export const ConvertView: React.FC = () => {
   const [jobs, setJobs] = useState<ConversionJob[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [ffmpegAvailable, setFfmpegAvailable] = useState<boolean | null>(null);
+  const recentDropsRef = useRef<Map<string, number>>(new Map());
 
   const checkFFmpeg = async () => {
     try {
@@ -105,7 +106,24 @@ export const ConvertView: React.FC = () => {
           droppedPaths = payload.paths;
         }
 
-        for (const path of droppedPaths) {
+        const now = Date.now();
+        const uniquePaths = Array.from(new Set(droppedPaths));
+        const acceptedPaths = uniquePaths.filter((path) => {
+          const last = recentDropsRef.current.get(path);
+          if (last && now - last < 2000) return false;
+          recentDropsRef.current.set(path, now);
+          return true;
+        });
+
+        if (recentDropsRef.current.size > 50) {
+          for (const [path, ts] of recentDropsRef.current) {
+            if (now - ts > 10000) {
+              recentDropsRef.current.delete(path);
+            }
+          }
+        }
+
+        for (const path of acceptedPaths) {
           await addConversionJob(path);
         }
         setIsDragging(false);

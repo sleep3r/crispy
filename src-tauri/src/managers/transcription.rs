@@ -2,10 +2,9 @@
 
 use crate::managers::model::{EngineType, ModelManager};
 use anyhow::Result;
-use hound::WavReader;
 use log::{debug, info};
-use rubato::{FftFixedIn, Resampler};
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::AppHandle;
 use transcribe_rs::{
@@ -19,66 +18,6 @@ use transcribe_rs::{
     TranscriptionEngine,
 };
 
-const WHISPER_SAMPLE_RATE: usize = 16000;
-const RESAMPLER_CHUNK: usize = 1024;
-
-/// Read WAV file and return mono f32 samples at 16 kHz for transcription.
-pub fn wav_to_16k_mono_f32(wav_path: &Path) -> Result<Vec<f32>> {
-    let mut reader = WavReader::open(wav_path)?;
-    let spec = reader.spec();
-    let sample_rate_in = spec.sample_rate as usize;
-    let channels = spec.channels as usize;
-
-    let mut mono_48k: Vec<f32> = Vec::new();
-    match spec.sample_format {
-        hound::SampleFormat::Int => {
-            let max_val = 32768.0f32;
-            for s in reader.samples::<i16>() {
-                let s = s?;
-                mono_48k.push((s as f32) / max_val);
-            }
-        }
-        hound::SampleFormat::Float => {
-            for s in reader.samples::<f32>() {
-                mono_48k.push(s?);
-            }
-        }
-    }
-
-    // Stereo -> mono: take left channel (every first sample per frame)
-    if channels == 2 {
-        mono_48k = mono_48k.iter().step_by(2).copied().collect();
-    }
-
-    if sample_rate_in == WHISPER_SAMPLE_RATE {
-        return Ok(mono_48k);
-    }
-
-    // Resample to 16 kHz
-    let mut resampler = FftFixedIn::<f32>::new(
-        sample_rate_in,
-        WHISPER_SAMPLE_RATE,
-        RESAMPLER_CHUNK,
-        1,
-        1,
-    )?;
-    let mut out = Vec::with_capacity(mono_48k.len() * WHISPER_SAMPLE_RATE / sample_rate_in);
-    let mut pos = 0;
-    while pos + RESAMPLER_CHUNK <= mono_48k.len() {
-        let chunk = &mono_48k[pos..pos + RESAMPLER_CHUNK];
-        let out_chunk = resampler.process(&[chunk], None)?;
-        out.extend_from_slice(&out_chunk[0]);
-        pos += RESAMPLER_CHUNK;
-    }
-    if pos < mono_48k.len() {
-        let mut pad = mono_48k[pos..].to_vec();
-        pad.resize(RESAMPLER_CHUNK, 0.0);
-        let out_chunk = resampler.process(&[&pad], None)?;
-        out.extend_from_slice(&out_chunk[0]);
-    }
-    Ok(out)
-}
-
 enum LoadedEngine {
     Whisper(WhisperEngine),
     Parakeet(ParakeetEngine),
@@ -88,7 +27,16 @@ enum LoadedEngine {
 pub struct TranscriptionManager {
     engine: Mutex<Option<LoadedEngine>>,
     current_model_id: Mutex<Option<String>>,
+    state: Mutex<HashMap<String, TranscriptionState>>,
     model_manager: std::sync::Arc<ModelManager>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct TranscriptionState {
+    pub status: String,
+    pub progress: f32,
+    pub eta_seconds: Option<u64>,
+    pub phase: Option<String>,
 }
 
 impl TranscriptionManager {
@@ -96,12 +44,24 @@ impl TranscriptionManager {
         Self {
             engine: Mutex::new(None),
             current_model_id: Mutex::new(None),
+            state: Mutex::new(HashMap::new()),
             model_manager,
         }
     }
 
     pub fn get_current_model(&self) -> Option<String> {
         self.current_model_id.lock().unwrap().clone()
+    }
+
+    pub fn set_state(&self, recording_path: &str, state: TranscriptionState) {
+        self.state
+            .lock()
+            .unwrap()
+            .insert(recording_path.to_string(), state);
+    }
+
+    pub fn get_state(&self, recording_path: &str) -> Option<TranscriptionState> {
+        self.state.lock().unwrap().get(recording_path).cloned()
     }
 
     pub fn load_model(&self, model_id: &str) -> Result<()> {
