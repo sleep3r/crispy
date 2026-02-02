@@ -206,11 +206,13 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
         operation: Option<&IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
         let op = operation.ok_or_else(|| windows::core::Error::from(E_FAIL))?;
-        let mut hr = windows::Win32::Foundation::S_OK;
-        let mut unk: Option<windows::core::IUnknown> = None;
-        unsafe {
-            op.GetActivateResult(&mut hr, &mut unk)?;
-        }
+        
+        let (hr, unk) = unsafe {
+            let mut hr = windows::Win32::Foundation::S_OK;
+            let mut unk: Option<windows::core::IUnknown> = None;
+            let _ = op.GetActivateResult(&mut hr, &mut unk);
+            (hr, unk)
+        };
 
         let res = if hr.is_ok() {
             Ok(unk.ok_or_else(|| windows::core::Error::from(E_FAIL))?)
@@ -221,7 +223,7 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
         *self.result.lock().unwrap() = Some(res);
 
         unsafe {
-            SetEvent(self.done_event).ok();
+            let _ = SetEvent(self.done_event);
         }
         Ok(())
     }
@@ -254,9 +256,7 @@ fn capture_process_loopback(
     app_buffer: Arc<Mutex<VecDeque<f32>>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }
-        .ok()
-        .map_err(|e| format!("CoInitializeEx failed: {e}"))?;
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
 
     // Create event for activation completion
     let done = unsafe { CreateEventW(None, true, false, None) }
@@ -280,14 +280,14 @@ fn capture_process_loopback(
         },
     };
 
-    let _operation = unsafe {
+    unsafe {
         ActivateAudioInterfaceAsync(
             &device_id,
             &IAudioClient::IID,
             Some(std::ptr::addr_of!(activation_params).cast()),
             &handler,
         )
-        .map_err(|e| format!("ActivateAudioInterfaceAsync failed: {e}"))?
+        .map_err(|e| format!("ActivateAudioInterfaceAsync failed: {e}"))?;
     };
 
     unsafe { WaitForSingleObject(done, INFINITE) };
@@ -310,10 +310,7 @@ fn capture_process_loopback(
     // Get mix format
     let pwfx = unsafe { audio_client.GetMixFormat() }
         .map_err(|e| format!("GetMixFormat failed: {e}"))?;
-    if pwfx.is_null() {
-        return Err("GetMixFormat returned null".to_string());
-    }
-
+    
     let mix = unsafe { *pwfx };
     let in_rate = mix.nSamplesPerSec as u32;
     let in_channels = mix.nChannels as usize;
@@ -353,24 +350,32 @@ fn capture_process_loopback(
         // Wait for audio data (with timeout to check stop flag)
         unsafe { WaitForSingleObject(ready_event, 50) };
 
-        let mut packet_frames = unsafe { capture_client.GetNextPacketSize() }
-            .map_err(|e| format!("GetNextPacketSize failed: {e}"))?;
+        loop {
+            let packet_frames = match unsafe { capture_client.GetNextPacketSize() } {
+                Ok(size) => size,
+                Err(e) => {
+                    eprintln!("GetNextPacketSize failed: {e}");
+                    break;
+                }
+            };
 
-        while packet_frames > 0 {
-            let mut data_ptr: *mut u8 = std::ptr::null_mut();
-            let mut num_frames: u32 = 0;
-            let mut flags: u32 = 0;
+            if packet_frames == 0 {
+                break;
+            }
 
-            unsafe {
+            let (data_ptr, num_frames, flags) = unsafe {
+                let mut data_ptr: *mut u8 = std::ptr::null_mut();
+                let mut num_frames: u32 = 0;
+                let mut flags: u32 = 0;
                 capture_client
                     .GetBuffer(&mut data_ptr, &mut num_frames, &mut flags, None, None)
                     .map_err(|e| format!("GetBuffer failed: {e}"))?;
-            }
+                (data_ptr, num_frames, flags)
+            };
 
             temp_mono.clear();
 
-            let is_silent =
-                (flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)) != 0;
+            let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0) != 0;
             if is_silent || data_ptr.is_null() || num_frames == 0 {
                 temp_mono.resize(num_frames as usize, 0.0);
             } else {
@@ -418,9 +423,6 @@ fn capture_process_loopback(
                     buf.push_back(s);
                 }
             }
-
-            packet_frames = unsafe { capture_client.GetNextPacketSize() }
-                .map_err(|e| format!("GetNextPacketSize failed: {e}"))?;
         }
     }
 
