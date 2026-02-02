@@ -21,8 +21,11 @@ use std::{
 };
 
 #[cfg(target_os = "windows")]
+use windows_implement::implement;
+
+#[cfg(target_os = "windows")]
 use windows::{
-    core::{implement, Interface, Result as WinResult, HSTRING},
+    core::{Interface, Result as WinResult, HSTRING},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
@@ -375,7 +378,7 @@ fn capture_process_loopback(
 
             temp_mono.clear();
 
-            let is_silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT.0) != 0;
+            let is_silent = (flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)) != 0;
             if is_silent || data_ptr.is_null() || num_frames == 0 {
                 temp_mono.resize(num_frames as usize, 0.0);
             } else {
