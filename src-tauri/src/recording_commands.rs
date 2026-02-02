@@ -62,12 +62,22 @@ pub fn do_start_recording(
 
     #[cfg(target_os = "windows")]
     if !app_id.is_empty() && app_id != "none" {
-        match recording::start_app_audio_capture(app_id, recording.app_buffer.clone()) {
-            Ok(_) => {
-                *recording.app_audio_active.lock().unwrap() = true;
+        // Reset stop flag
+        recording
+            .app_audio_stop
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        match recording::start_app_audio_capture(
+            app_id,
+            recording.app_buffer.clone(),
+            recording.app_audio_stop.clone(),
+        ) {
+            Ok(handle) => {
+                *recording.app_audio_worker.lock().unwrap() = Some(handle);
             }
             Err(e) => {
                 eprintln!("Warning: Failed to start app audio capture: {}", e);
+                eprintln!("Note: Process loopback requires Windows 10 2004+ (build 19041)");
                 // Continue with mic-only recording
             }
         }
@@ -99,7 +109,21 @@ pub fn do_stop_recording(state: &AppState) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
         let recording = state.recording.lock().unwrap();
-        *recording.app_audio_active.lock().unwrap() = false;
+        // Signal stop to capture thread
+        recording
+            .app_audio_stop
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        
+        // Take worker handle and join
+        let worker_opt = recording.app_audio_worker.lock().unwrap().take();
+        drop(recording); // Release lock before joining
+        
+        if let Some(handle) = worker_opt {
+            let _ = handle.join();
+        }
+        
+        // Clear buffer
+        let recording = state.recording.lock().unwrap();
         recording.app_buffer.lock().unwrap().clear();
     }
 

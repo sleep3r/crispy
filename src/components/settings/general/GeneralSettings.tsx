@@ -155,8 +155,8 @@ export const GeneralSettings: React.FC = () => {
       >
         <AppSelector grouped />
         {currentPlatform === "windows" && (
-          <div className="px-3 py-2 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-xs text-yellow-800">
-            <strong>Note:</strong> App audio capture on Windows is coming soon. For now, only microphone audio will be recorded.
+          <div className="px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/10 text-xs text-blue-800">
+            <strong>Windows 10 2004+ required:</strong> App audio capture uses Process Loopback (requires Windows 10 build 19041 or newer). If capture fails, only microphone audio will be recorded.
           </div>
         )}
         <RecordingControls />

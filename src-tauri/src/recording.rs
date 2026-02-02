@@ -47,7 +47,9 @@ pub struct RecordingState {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     pub app_audio_stream: Arc<Mutex<Option<SCStream>>>,
     #[cfg(target_os = "windows")]
-    pub app_audio_active: Arc<Mutex<bool>>,
+    pub app_audio_stop: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(target_os = "windows")]
+    pub app_audio_worker: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 impl RecordingState {
@@ -60,7 +62,9 @@ impl RecordingState {
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             app_audio_stream: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "windows")]
-            app_audio_active: Arc::new(Mutex::new(false)),
+            app_audio_stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(target_os = "windows")]
+            app_audio_worker: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -374,8 +378,9 @@ pub fn start_app_audio_capture(
 pub fn start_app_audio_capture(
     app_id: &str,
     app_buffer: Arc<Mutex<VecDeque<f32>>>,
-) -> Result<(), String> {
-    crate::windows_audio::start_app_audio_capture_windows(app_id, app_buffer)
+    stop_flag: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<std::thread::JoinHandle<()>, String> {
+    crate::windows_audio::start_app_audio_capture_windows(app_id, app_buffer, stop_flag)
 }
 
 #[cfg(not(any(all(target_os = "macos", target_arch = "aarch64"), target_os = "windows")))]

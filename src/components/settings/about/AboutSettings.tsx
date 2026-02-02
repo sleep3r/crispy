@@ -51,7 +51,20 @@ export const AboutSettings: React.FC = () => {
           grouped={true}
           layout="stacked"
         >
-          <div className="text-sm text-mid-gray">Coming soon.</div>
+          <div className="space-y-3 text-sm">
+            <div>
+              <button
+                type="button"
+                onClick={() => openUrl("https://github.com/cjpais/Handy")}
+                className="font-medium text-logo-primary hover:underline"
+              >
+                Handy
+              </button>
+              <p className="text-mid-gray mt-1">
+                Open-source speech-to-text application. Inspired the architecture and model management approach.
+              </p>
+            </div>
+          </div>
         </SettingContainer>
       </SettingsGroup>
     </div>
