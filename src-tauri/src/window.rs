@@ -58,7 +58,10 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
             let _ = window.show();
             // Don't force focus — reduces switching out of fullscreen
             // let _ = window.set_focus();
+            #[cfg(target_os = "macos")]
             let _ = window.move_window(Position::TrayBottomCenter);
+            #[cfg(not(target_os = "macos"))]
+            let _ = window.move_window(Position::TrayTopCenter);
         }
         return;
     }
@@ -80,6 +83,9 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
         }
         let _ = window.show();
         // let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
         let _ = window.move_window(Position::TrayBottomCenter);
+        #[cfg(not(target_os = "macos"))]
+        let _ = window.move_window(Position::TrayTopCenter);
     }
 }

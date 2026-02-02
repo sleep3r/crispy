@@ -60,17 +60,46 @@ fn main() {
                 }
             }
 
-            let icon = app
-                .path()
-                .resolve("resources/tray.png", tauri::path::BaseDirectory::Resource)
-                .ok()
-                .and_then(|p| tauri::image::Image::from_path(p).ok())
-                .or_else(|| app.default_window_icon().cloned());
-            let icon = icon.expect("tray icon: run scripts/tray_icon.py or provide default icon");
+            // On macOS we want a template icon so it adapts to light/dark menu bar.
+            // On other platforms we use a solid black icon so it's always visible.
+            #[cfg(target_os = "macos")]
+            let (icon, icon_as_template) = {
+                let base_icon = app
+                    .path()
+                    .resolve("resources/tray.png", tauri::path::BaseDirectory::Resource)
+                    .ok()
+                    .and_then(|p| tauri::image::Image::from_path(p).ok())
+                    .or_else(|| app.default_window_icon().cloned())
+                    .expect("tray icon: provide resources/tray.png or a default icon");
+                (base_icon, true)
+            };
+
+            #[cfg(not(target_os = "macos"))]
+            let (icon, icon_as_template) = {
+                let black_icon = app
+                    .path()
+                    .resolve("resources/tray-black.png", tauri::path::BaseDirectory::Resource)
+                    .ok()
+                    .and_then(|p| tauri::image::Image::from_path(p).ok());
+
+                // Fallback to original icon if black one is missing.
+                let base_icon = black_icon
+                    .or_else(|| {
+                        app.path()
+                            .resolve("resources/tray.png", tauri::path::BaseDirectory::Resource)
+                            .ok()
+                            .and_then(|p| tauri::image::Image::from_path(p).ok())
+                    })
+                    .or_else(|| app.default_window_icon().cloned())
+                    .expect("tray icon: provide resources/tray-black.png/tray.png or a default icon");
+
+                (base_icon, false)
+            };
+
             let tray = tauri::tray::TrayIconBuilder::new()
                 .icon(icon)
                 .menu_on_left_click(false)
-                .icon_as_template(true)
+                .icon_as_template(icon_as_template)
                 .on_tray_icon_event(|tray, event| {
                     tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
                     if let TrayIconEvent::Click {
