@@ -24,7 +24,7 @@ use std::{
 use windows::{
     core::{implement, Interface, Result as WinResult, HSTRING},
     Win32::{
-        Foundation::{CloseHandle, E_FAIL, HANDLE, WAIT_OBJECT_0},
+        Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
         System::{
             Com::{CoInitializeEx, CoTaskMemFree, COINIT_MULTITHREADED},
