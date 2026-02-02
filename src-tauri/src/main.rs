@@ -26,6 +26,18 @@ use tauri::tray::{TrayIconEvent};
 use tauri::Manager;
 use tauri_plugin_positioner;
 
+#[tauri::command]
+fn get_platform() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    return Ok("windows".to_string());
+    #[cfg(target_os = "macos")]
+    return Ok("macos".to_string());
+    #[cfg(target_os = "linux")]
+    return Ok("linux".to_string());
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Ok("unknown".to_string());
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -159,6 +171,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            get_platform,
             audio::get_input_devices,
             audio::get_output_devices,
             audio::get_default_devices,

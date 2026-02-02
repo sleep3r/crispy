@@ -171,36 +171,39 @@ export const ConvertView: React.FC = () => {
 
       {/* FFmpeg Warning */}
       {ffmpegAvailable === false && (
-        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 space-y-3">
-          <div>
-            <p className="text-sm font-medium text-red-600">FFmpeg not installed</p>
-            <p className="text-xs text-red-600/80 mt-1">
-              FFmpeg is required for file conversion. Install it to enable this feature.
+        <div className="px-4 py-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-sm">
+          <div className="font-medium text-blue-800">FFmpeg required</div>
+          <div className="mt-2 text-blue-700/90 space-y-1.5">
+            <p>
+              FFmpeg is required to convert audio and video files. Install it to enable this feature.
             </p>
+            <div className="text-xs space-y-1 mt-2">
+              <p className="font-medium text-blue-800">Installation:</p>
+              <ul className="space-y-0.5 ml-3">
+                <li>
+                  <strong>macOS:</strong> <code className="bg-blue-700/20 px-1 rounded">brew install ffmpeg</code>
+                </li>
+                <li>
+                  <strong>Ubuntu/Debian:</strong> <code className="bg-blue-700/20 px-1 rounded">sudo apt install ffmpeg</code>
+                </li>
+                <li>
+                  <strong>Windows:</strong> Press Win+R, then run <code className="bg-blue-700/20 px-1 rounded">winget install ffmpeg</code>
+                </li>
+              </ul>
+            </div>
           </div>
-          
-          <div className="space-y-2 text-xs text-red-600/80">
-            <p className="font-medium">Installation:</p>
-            <ul className="list-disc list-inside space-y-1 ml-2">
-              <li><span className="font-mono">macOS:</span> brew install ffmpeg</li>
-              <li><span className="font-mono">Ubuntu/Debian:</span> sudo apt install ffmpeg</li>
-              <li><span className="font-mono">Windows:</span> Win+R, then winget install ffmpeg</li>
-            </ul>
-          </div>
-
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 mt-3">
             <button
               type="button"
               onClick={handleOpenFfmpegSite}
-              className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 font-medium"
+              className="text-xs text-blue-700 hover:text-blue-800 font-medium underline"
             >
               Download FFmpeg
-              <span className="text-[10px]">↗</span>
             </button>
             <button
               type="button"
               onClick={checkFFmpeg}
-              className="text-xs text-red-600/60 hover:text-red-600 font-medium"
+              className="text-xs text-blue-700/60 hover:text-blue-700 font-medium"
             >
               Recheck
             </button>
