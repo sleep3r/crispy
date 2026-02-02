@@ -61,7 +61,7 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
             #[cfg(target_os = "macos")]
             let _ = window.move_window(Position::TrayBottomCenter);
             #[cfg(not(target_os = "macos"))]
-            let _ = window.move_window(Position::TrayTopCenter);
+            let _ = window.move_window(Position::TrayCenter);
         }
         return;
     }
@@ -86,6 +86,6 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
         #[cfg(target_os = "macos")]
         let _ = window.move_window(Position::TrayBottomCenter);
         #[cfg(not(target_os = "macos"))]
-        let _ = window.move_window(Position::TrayTopCenter);
+        let _ = window.move_window(Position::TrayCenter);
     }
 }

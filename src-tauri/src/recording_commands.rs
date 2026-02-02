@@ -19,7 +19,7 @@ fn recordings_dir() -> Result<std::path::PathBuf, String> {
         .join("Recordings"))
 }
 
-pub fn do_start_recording(state: &AppState, app_id: &str) -> Result<(), String> {
+pub fn do_start_recording(state: &AppState, _app_id: &str) -> Result<(), String> {
     let mut recording = state.recording.lock().unwrap();
 
     if recording.writer.lock().unwrap().is_some() {
@@ -42,8 +42,8 @@ pub fn do_start_recording(state: &AppState, app_id: &str) -> Result<(), String> 
     recording.app_buffer.lock().unwrap().clear();
 
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    if !app_id.is_empty() && app_id != "none" {
-        match recording::start_app_audio_capture(app_id, recording.app_buffer.clone()) {
+    if !_app_id.is_empty() && _app_id != "none" {
+        match recording::start_app_audio_capture(_app_id, recording.app_buffer.clone()) {
             Ok(stream) => {
                 *recording.app_audio_stream.lock().unwrap() = Some(stream);
             }

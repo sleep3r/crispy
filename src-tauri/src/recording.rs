@@ -369,10 +369,4 @@ pub fn start_app_audio_capture(
     Err("App audio capture is not supported on this platform".to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
-pub fn start_app_audio_capture(
-    _app_id: &str,
-    _app_buffer: Arc<Mutex<VecDeque<f32>>>,
-) -> Result<(), String> {
-    Err("App audio capture is only supported on macOS".to_string())
-}
+// Non-macOS (and macOS x86) stub defined above.

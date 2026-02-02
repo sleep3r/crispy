@@ -15,6 +15,7 @@ mod system_input_volume;
 
 use std::sync::{Arc, Mutex};
 use std::thread;
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 use app_state::AppState;
