@@ -144,19 +144,16 @@ impl TranscriptionManager {
 }
 
 /// Base directory for transcriptions: ~/Documents/Crispy/Transcriptions (next to Recordings and settings).
-fn transcriptions_dir() -> Result<PathBuf> {
-    let home = std::env::var("HOME").map_err(|_| anyhow::anyhow!("HOME not set"))?;
-    let dir = PathBuf::from(home)
-        .join("Documents")
-        .join("Crispy")
-        .join("Transcriptions");
+fn transcriptions_dir(app: &AppHandle) -> Result<PathBuf> {
+    let dir = crate::paths::transcriptions_dir(app)
+        .map_err(|e| anyhow::anyhow!(e))?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
 /// Store transcription result by recording path. Uses a hash of path as filename.
 pub fn transcription_result_path(_app: &AppHandle, recording_path: &str) -> Result<PathBuf> {
-    let dir = transcriptions_dir()?;
+    let dir = transcriptions_dir(_app)?;
     let name = transcription_file_stem(recording_path);
     Ok(dir.join(format!("{}.txt", name)))
 }
@@ -171,7 +168,7 @@ fn transcription_file_stem(recording_path: &str) -> String {
 
 /// Path to metadata file (model_id) for a transcription. Same stem as .txt but .meta.
 pub fn transcription_metadata_path(_app: &AppHandle, recording_path: &str) -> Result<PathBuf> {
-    let dir = transcriptions_dir()?;
+    let dir = transcriptions_dir(_app)?;
     let name = transcription_file_stem(recording_path);
     Ok(dir.join(format!("{}.meta", name)))
 }
@@ -181,7 +178,7 @@ pub fn transcription_chat_history_path(
     _app: &AppHandle,
     recording_path: &str,
 ) -> Result<PathBuf> {
-    let dir = transcriptions_dir()?;
+    let dir = transcriptions_dir(_app)?;
     let name = transcription_file_stem(recording_path);
     Ok(dir.join(format!("{}.chat.json", name)))
 }

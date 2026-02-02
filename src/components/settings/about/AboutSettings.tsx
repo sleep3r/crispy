@@ -16,16 +16,16 @@ export const AboutSettings: React.FC = () => {
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title="About">
         <SettingContainer
-          title="Support & development"
+          title="Support Crispy"
           description="If you want to support the project, you can do it here."
           grouped={true}
         >
           <button
             type="button"
-            onClick={() => openUrl("https://stripe.com")}
+            onClick={() => openUrl("https://ko-fi.com/sleep3r")}
             className="inline-flex items-center px-3 py-1.5 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors"
           >
-            Open Stripe
+            Open Ko-fi
           </button>
         </SettingContainer>
 

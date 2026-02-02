@@ -66,12 +66,8 @@ impl Default for SettingsFile {
     }
 }
 
-fn settings_file_path(_app: &AppHandle) -> Result<PathBuf> {
-    let home = std::env::var("HOME")
-        .map_err(|_| anyhow::anyhow!("Cannot find home directory"))?;
-    let dir = PathBuf::from(home)
-        .join("Documents")
-        .join("Crispy");
+fn settings_file_path(app: &AppHandle) -> Result<PathBuf> {
+    let dir = crate::paths::crispy_documents_root(app).map_err(|e| anyhow::anyhow!(e))?;
     std::fs::create_dir_all(&dir)?;
     Ok(dir.join("settings.json"))
 }

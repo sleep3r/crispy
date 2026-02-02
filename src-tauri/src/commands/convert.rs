@@ -1,16 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use tauri::async_runtime::spawn_blocking;
-
-fn recordings_dir() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "Cannot find home directory".to_string())?;
-    Ok(PathBuf::from(home)
-        .join("Documents")
-        .join("Crispy")
-        .join("Recordings"))
-}
+use tauri::AppHandle;
 
 fn get_ffmpeg_command() -> &'static str {
     #[cfg(target_os = "windows")]
@@ -24,17 +15,15 @@ fn get_ffmpeg_command() -> &'static str {
 }
 
 #[tauri::command]
-pub async fn convert_to_wav(input_path: String) -> Result<String, String> {
+pub async fn convert_to_wav(app: AppHandle, input_path: String) -> Result<String, String> {
+    let recordings_dir = crate::paths::recordings_dir(&app)?;
+    crate::paths::ensure_dir(&recordings_dir)?;
     spawn_blocking(move || {
         let input = Path::new(&input_path);
         
         if !input.exists() {
             return Err("Input file does not exist".to_string());
         }
-
-        let recordings_dir = recordings_dir()?;
-        std::fs::create_dir_all(&recordings_dir)
-            .map_err(|e| format!("Failed to create recordings directory: {}", e))?;
 
         // Generate output filename
         let input_stem = input

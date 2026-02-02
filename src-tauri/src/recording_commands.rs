@@ -1,34 +1,36 @@
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use base64::Engine;
+use tauri::AppHandle;
 
 use crate::app_state::AppState;
 use crate::recording;
 
 static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 
-fn recordings_dir() -> Result<std::path::PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "Cannot find home directory".to_string())?;
-    Ok(std::path::PathBuf::from(home)
-        .join("Documents")
-        .join("Crispy")
-        .join("Recordings"))
+fn recordings_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = crate::paths::recordings_dir(app)?;
+    crate::paths::ensure_dir(&dir)?;
+    Ok(dir)
 }
 
-pub fn do_start_recording(state: &AppState, _app_id: &str) -> Result<(), String> {
+pub fn do_start_recording(
+    app: &AppHandle,
+    state: &AppState,
+    app_id: &str,
+) -> Result<(), String> {
     let mut recording = state.recording.lock().unwrap();
 
     if recording.writer.lock().unwrap().is_some() {
         return Err("Recording already in progress".to_string());
     }
 
-    let output_dir = recordings_dir()?;
-    std::fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    let output_dir = recordings_dir(app)?;
 
     let now = chrono::Local::now();
     let filename = format!("recording_{}.wav", now.format("%Y%m%d_%H%M%S"));
@@ -42,8 +44,8 @@ pub fn do_start_recording(state: &AppState, _app_id: &str) -> Result<(), String>
     recording.app_buffer.lock().unwrap().clear();
 
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    if !_app_id.is_empty() && _app_id != "none" {
-        match recording::start_app_audio_capture(_app_id, recording.app_buffer.clone()) {
+    if !app_id.is_empty() && app_id != "none" {
+        match recording::start_app_audio_capture(app_id, recording.app_buffer.clone()) {
             Ok(stream) => {
                 *recording.app_audio_stream.lock().unwrap() = Some(stream);
             }
@@ -188,8 +190,12 @@ pub fn get_recordable_apps() -> Result<Vec<recording::RecordableApp>, String> {
 }
 
 #[tauri::command]
-pub fn start_recording(state: tauri::State<AppState>, app_id: String) -> Result<(), String> {
-    do_start_recording(state.inner(), &app_id)
+pub fn start_recording(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+    app_id: String,
+) -> Result<(), String> {
+    do_start_recording(&app, state.inner(), &app_id)
 }
 
 #[tauri::command]
@@ -205,15 +211,13 @@ pub fn is_recording(state: tauri::State<AppState>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn get_recordings_dir_path() -> Result<String, String> {
-    Ok(recordings_dir()?.to_string_lossy().to_string())
+pub fn get_recordings_dir_path(app: AppHandle) -> Result<String, String> {
+    Ok(recordings_dir(&app)?.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub fn open_recordings_dir() -> Result<(), String> {
-    let recordings_dir = recordings_dir()?;
-    std::fs::create_dir_all(&recordings_dir)
-        .map_err(|e| format!("Failed to create recordings directory: {}", e))?;
+pub fn open_recordings_dir(app: AppHandle) -> Result<(), String> {
+    let recordings_dir = recordings_dir(&app)?;
 
     #[cfg(target_os = "macos")]
     std::process::Command::new("open")
@@ -268,8 +272,8 @@ pub struct RecordingFile {
 }
 
 #[tauri::command]
-pub fn get_recordings() -> Result<Vec<RecordingFile>, String> {
-    let recordings_dir = recordings_dir()?;
+pub fn get_recordings(app: AppHandle) -> Result<Vec<RecordingFile>, String> {
+    let recordings_dir = recordings_dir(&app)?;
 
     if !recordings_dir.exists() {
         return Ok(Vec::new());
@@ -313,7 +317,7 @@ pub fn get_recordings() -> Result<Vec<RecordingFile>, String> {
 #[tauri::command]
 pub fn rename_recording(app: tauri::AppHandle, path: String, new_name: String) -> Result<(), String> {
     let old_path_str = path.clone();
-    let path = std::path::Path::new(&path);
+    let path = Path::new(&path);
     if !path.exists() {
         return Err("Recording not found".to_string());
     }
@@ -328,7 +332,7 @@ pub fn rename_recording(app: tauri::AppHandle, path: String, new_name: String) -
     {
         return Err("Name cannot contain path separators".to_string());
     }
-    let base = std::path::Path::new(new_name)
+    let base = Path::new(new_name)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(new_name);

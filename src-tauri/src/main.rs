@@ -6,6 +6,7 @@ mod audio;
 mod commands;
 mod llm_settings;
 mod managers;
+mod paths;
 mod recording;
 mod recording_commands;
 mod window;

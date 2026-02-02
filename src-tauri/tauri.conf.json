@@ -27,8 +27,8 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$HOME/Documents/Crispy/Recordings/**",
-          "$USERPROFILE/Documents/Crispy/Recordings/**"
+          "$DOCUMENT/Crispy/Recordings/**",
+          "$DOCUMENT/Crispy/Transcriptions/**"
         ]
       }
     }
