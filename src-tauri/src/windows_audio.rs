@@ -206,15 +206,15 @@ impl ActivateHandler {
 impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
     fn ActivateCompleted(
         &self,
-        operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+        operation: windows::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
-        let op = operation.ok_or_else(|| windows::core::Error::from(E_FAIL))?;
+        let operation: &IActivateAudioInterfaceAsyncOperation = operation.as_ref();
         
         let mut hr = windows::Win32::Foundation::S_OK;
         let mut unk: Option<windows::core::IUnknown> = None;
 
         unsafe {
-            op.GetActivateResult(&mut hr, &mut unk)?;
+            operation.GetActivateResult(&mut hr, &mut unk)?;
         }
 
         let res = if hr.is_ok() {
