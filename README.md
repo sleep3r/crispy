@@ -239,23 +239,6 @@ RUST_LOG=debug make dev
 println!("Available devices: {:?}", devices);
 ```
 
-## 🗺️ Roadmap
-
-- [x] Real-time noise suppression
-- [x] Device selection and audio routing
-- [x] Live audio monitoring with meters
-- [x] Recording (mic + app audio)
-- [x] Auto-transcription with multiple models
-- [x] LLM chat integration (streaming responses)
-- [x] System tray with quick controls
-- [x] Settings persistence
-- [x] ScreenCaptureKit app audio capture
-- [x] RNN Noise as first real noise suppression model
-- [ ] Custom hotkeys
-- [ ] Windows/Linux support
-- [ ] Additional noise suppression models
-- [ ] Audio effects (EQ, compressor)
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
