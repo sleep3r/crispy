@@ -1,0 +1,51 @@
+name: "Test Signing Key"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-key:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check key format
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY is empty or not set"
+            exit 1
+          fi
+          
+          KEY_LENGTH=${#TAURI_SIGNING_PRIVATE_KEY}
+          echo "✅ Key is present"
+          echo "📏 Key length: $KEY_LENGTH characters"
+          
+          if [ $KEY_LENGTH -lt 300 ]; then
+            echo "⚠️  Key seems too short (expected ~348 chars)"
+            exit 1
+          fi
+          
+          if [ $KEY_LENGTH -gt 400 ]; then
+            echo "⚠️  Key seems too long (expected ~348 chars, might have extra newlines)"
+            exit 1
+          fi
+          
+          # Check if key starts with expected prefix
+          if [[ "$TAURI_SIGNING_PRIVATE_KEY" == dW50cnVzdGVk* ]]; then
+            echo "✅ Key format looks correct (starts with 'dW50cnVzdGVk')"
+          else
+            echo "❌ Key format is incorrect (should start with 'dW50cnVzdGVk')"
+            exit 1
+          fi
+          
+          # Check for newlines (should be none)
+          NEWLINE_COUNT=$(echo "$TAURI_SIGNING_PRIVATE_KEY" | grep -o $'\n' | wc -l || echo "0")
+          if [ "$NEWLINE_COUNT" -gt 0 ]; then
+            echo "❌ Key contains $NEWLINE_COUNT newlines (should be 0)"
+            exit 1
+          else
+            echo "✅ No newlines in key (correct)"
+          fi
+          
+          echo ""
+          echo "🎉 Key validation passed!"
