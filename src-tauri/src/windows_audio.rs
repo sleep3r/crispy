@@ -208,7 +208,7 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler_Impl {
         &self,
         operation: windows62::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
-        let this: &ActivateHandler = &self.0;
+        let this: &ActivateHandler = &self.this;
         
         let operation: &IActivateAudioInterfaceAsyncOperation =
             operation.as_ref().ok_or_else(|| windows62::core::Error::from(E_FAIL))?;
