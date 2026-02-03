@@ -6,4 +6,3 @@ resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-windows-core = "0.62.2"

@@ -21,8 +21,11 @@ use std::{
 };
 
 #[cfg(target_os = "windows")]
+use windows_implement::implement;
+
+#[cfg(target_os = "windows")]
 use windows::{
-    core::{implement, Interface, Result as WinResult, HSTRING},
+    core::{Interface, Result as WinResult, HSTRING},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
@@ -203,13 +206,15 @@ impl ActivateHandler {
 impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
     fn ActivateCompleted(
         &self,
-        operation: windows::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
+        operation: Option<&IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
+        let op = operation.ok_or_else(|| windows::core::Error::from(E_FAIL))?;
+        
         let mut hr = windows::Win32::Foundation::S_OK;
         let mut unk: Option<windows::core::IUnknown> = None;
 
         unsafe {
-            operation.GetActivateResult(&mut hr, &mut unk)?;
+            op.GetActivateResult(&mut hr, &mut unk)?;
         }
 
         let res = if hr.is_ok() {
