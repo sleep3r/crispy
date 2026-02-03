@@ -147,8 +147,6 @@ fn is_system_process(name: &str) -> bool {
         "applicationframehost.exe",
         "securityhealthsystray.exe",
         "securityhealthservice.exe",
-        "msedge.exe",
-        "msedgewebview2.exe",
     ];
 
     let name_lower = name.to_lowercase();
@@ -158,10 +156,8 @@ fn is_system_process(name: &str) -> bool {
         return true;
     }
 
-    // Filter obvious non-GUI processes
-    if name_lower.ends_with("host.exe")
-        || name_lower.ends_with("service.exe")
-        || name_lower.ends_with("helper.exe")
+    // Filter obvious non-GUI processes (but allow user apps)
+    if name_lower.ends_with("service.exe")
         || name_lower.contains("background")
         || name_lower.contains("update")
     {
