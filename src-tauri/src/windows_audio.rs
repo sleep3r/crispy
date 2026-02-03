@@ -21,7 +21,7 @@ use std::{
 };
 
 #[cfg(target_os = "windows")]
-use windows::{
+use windows62::{
     core::{implement, Interface, Result as WinResult, HSTRING},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
@@ -185,14 +185,14 @@ fn parse_pid(app_id: &str) -> Result<u32, String> {
 #[implement(IActivateAudioInterfaceCompletionHandler)]
 struct ActivateHandler {
     done_event: HANDLE,
-    result: Arc<Mutex<Option<WinResult<windows::core::IUnknown>>>>,
+    result: Arc<Mutex<Option<WinResult<windows62::core::IUnknown>>>>,
 }
 
 #[cfg(target_os = "windows")]
 impl ActivateHandler {
     fn new(
         done_event: HANDLE,
-        result: Arc<Mutex<Option<WinResult<windows::core::IUnknown>>>>,
+        result: Arc<Mutex<Option<WinResult<windows62::core::IUnknown>>>>,
     ) -> Self {
         Self { done_event, result }
     }
@@ -203,22 +203,22 @@ impl ActivateHandler {
 impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
     fn ActivateCompleted(
         &self,
-        operation: windows::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
+        operation: windows62::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
         let operation: &IActivateAudioInterfaceAsyncOperation =
-            operation.as_ref().ok_or_else(|| windows::core::Error::from(E_FAIL))?;
+            operation.as_ref().ok_or_else(|| windows62::core::Error::from(E_FAIL))?;
         
-        let mut hr = windows::Win32::Foundation::S_OK;
-        let mut unk: Option<windows::core::IUnknown> = None;
+        let mut hr = windows62::Win32::Foundation::S_OK;
+        let mut unk: Option<windows62::core::IUnknown> = None;
 
         unsafe {
             operation.GetActivateResult(&mut hr, &mut unk)?;
         }
 
         let res = if hr.is_ok() {
-            Ok(unk.ok_or_else(|| windows::core::Error::from(E_FAIL))?)
+            Ok(unk.ok_or_else(|| windows62::core::Error::from(E_FAIL))?)
         } else {
-            Err(windows::core::Error::from(hr))
+            Err(windows62::core::Error::from(hr))
         };
 
         *self.result.lock().unwrap() = Some(res);
@@ -283,7 +283,7 @@ fn capture_process_loopback(
     };
 
     unsafe {
-        windows::Win32::Media::Audio::ActivateAudioInterfaceAsync(
+        windows62::Win32::Media::Audio::ActivateAudioInterfaceAsync(
             &device_id,
             &IAudioClient::IID,
             Some(std::ptr::addr_of!(activation_params).cast()),
