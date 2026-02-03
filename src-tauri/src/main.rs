@@ -45,6 +45,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(AppState {
             audio: Arc::new(Mutex::new(AudioMonitorState::new())),
             recording: Arc::new(Mutex::new(RecordingState::new())),

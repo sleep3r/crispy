@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { FooterModelSelector } from "./FooterModelSelector";
+import { UpdateChecker } from "./UpdateChecker";
 import { useTranscriptionModels } from "../../hooks/useTranscriptionModels";
 import type { SidebarSection } from "../Sidebar";
 
@@ -28,7 +29,10 @@ const Footer: React.FC<FooterProps> = ({ currentSection }) => {
             <FooterModelSelector currentSection={currentSection} />
           )}
         </div>
-        <span>v{version}</span>
+        <div className="flex items-center gap-3">
+          <UpdateChecker />
+          <span>v{version}</span>
+        </div>
       </div>
       {downloadSummary.active && (
         <div className="px-4 pb-2 text-xs text-mid-gray">
