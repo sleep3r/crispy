@@ -21,11 +21,8 @@ use std::{
 };
 
 #[cfg(target_os = "windows")]
-use windows_implement::implement;
-
-#[cfg(target_os = "windows")]
 use windows::{
-    core::{Interface, Result as WinResult, HSTRING},
+    core::{implement, Interface, Result as WinResult, HSTRING},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
@@ -203,12 +200,11 @@ impl ActivateHandler {
 
 #[cfg(target_os = "windows")]
 #[allow(non_snake_case)]
-impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler_Impl {
+impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
     fn ActivateCompleted(
         &self,
         operation: windows::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
-        let this: &ActivateHandler = self;
         let operation: &IActivateAudioInterfaceAsyncOperation =
             operation.as_ref().ok_or_else(|| windows::core::Error::from(E_FAIL))?;
         
@@ -225,10 +221,10 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler_Impl {
             Err(windows::core::Error::from(hr))
         };
 
-        *this.result.lock().unwrap() = Some(res);
+        *self.result.lock().unwrap() = Some(res);
 
         unsafe {
-            let _ = SetEvent(this.done_event);
+            let _ = SetEvent(self.done_event);
         }
         
         Ok(())
@@ -287,7 +283,7 @@ fn capture_process_loopback(
     };
 
     unsafe {
-        ActivateAudioInterfaceAsync(
+        windows::Win32::Media::Audio::ActivateAudioInterfaceAsync(
             &device_id,
             &IAudioClient::IID,
             Some(std::ptr::addr_of!(activation_params).cast()),
