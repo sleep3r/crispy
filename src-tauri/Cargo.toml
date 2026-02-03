@@ -57,6 +57,7 @@ windows62 = { package = "windows", version = "=0.62.2", features = [
     "Win32_Security",
 ] }
 windows-core = "=0.62.2"
+windows-implement = "=0.60.2"
 
 [profile.release]
 lto = true

@@ -21,8 +21,11 @@ use std::{
 };
 
 #[cfg(target_os = "windows")]
+use windows_implement::implement;
+
+#[cfg(target_os = "windows")]
 use windows62::{
-    core::{implement, Interface, Result as WinResult, HSTRING},
+    core::{Interface, Result as WinResult, HSTRING},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
@@ -200,11 +203,13 @@ impl ActivateHandler {
 
 #[cfg(target_os = "windows")]
 #[allow(non_snake_case)]
-impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
+impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler_Impl {
     fn ActivateCompleted(
         &self,
         operation: windows62::core::Ref<'_, IActivateAudioInterfaceAsyncOperation>,
     ) -> WinResult<()> {
+        let this: &ActivateHandler = &self.0;
+        
         let operation: &IActivateAudioInterfaceAsyncOperation =
             operation.as_ref().ok_or_else(|| windows62::core::Error::from(E_FAIL))?;
         
@@ -221,10 +226,10 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler {
             Err(windows62::core::Error::from(hr))
         };
 
-        *self.result.lock().unwrap() = Some(res);
+        *this.result.lock().unwrap() = Some(res);
 
         unsafe {
-            let _ = SetEvent(self.done_event);
+            let _ = SetEvent(this.done_event);
         }
         
         Ok(())
