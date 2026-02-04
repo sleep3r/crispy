@@ -87,6 +87,20 @@ impl LinearResampler {
         }
     }
 
+    fn rates(&self) -> (f32, f32) {
+        (self.input_rate, self.output_rate)
+    }
+
+    fn set_rates(&mut self, input_rate: f32, output_rate: f32) {
+        self.input_rate = input_rate;
+        self.output_rate = output_rate;
+        // Reset internal state so interpolation is consistent after a rate change.
+        self.last_sample = 0.0;
+        self.has_last = false;
+        self.input_pos = 0.0;
+        self.next_output_pos = 0.0;
+    }
+
     fn process_sample<F: FnMut(f32)>(&mut self, sample: f32, mut emit: F) {
         if (self.input_rate - self.output_rate).abs() < 1.0 {
             emit(sample);
@@ -196,7 +210,6 @@ struct RnnNoiseProcessor {
 
 impl RnnNoiseProcessor {
     fn new(input_rate: f32, output_rate: f32, volume: f32) -> Self {
-        let max_output_len = input_rate as usize;
         let (effective_input_rate, input_resampler) = if (input_rate - 48000.0).abs() >= 1.0 {
             (
                 48000.0,
@@ -205,6 +218,8 @@ impl RnnNoiseProcessor {
         } else {
             (input_rate, None)
         };
+
+        let max_output_len = effective_input_rate as usize;
 
         Self {
             denoise: DenoiseState::new(),
@@ -327,6 +342,13 @@ impl NsState {
         match self {
             NsState::Legacy(s) => s.volume,
             NsState::RnnNoise(s) => s.volume,
+        }
+    }
+
+    fn produced_rate_hz(&self) -> f32 {
+        match self {
+            NsState::Legacy(s) => s.input_rate,
+            NsState::RnnNoise(s) => s.input_rate, // effective (48k when resampling is enabled)
         }
     }
 }
@@ -500,10 +522,15 @@ pub fn start_monitoring(
             (None, None, None, None)
         };
 
-    let shared: Option<Arc<Mutex<NsState>>> = if let Some(ref output_config) = output_config {
-        let input_rate = config.sample_rate() as f32;
-        let output_rate = output_config.sample_rate() as f32;
-        let vol = volume.clamp(0.0, 1.0);
+    // Create noise suppression processor regardless of output device
+    // (recording needs it even without monitoring)
+    let input_rate = config.sample_rate() as f32;
+    let output_rate = output_config.as_ref().map(|c| c.sample_rate() as f32).unwrap_or(input_rate);
+    let vol = volume.clamp(0.0, 1.0);
+    
+    let shared: Option<Arc<Mutex<NsState>>> = if model_name == "dummy" || model_name.is_empty() {
+        None
+    } else {
         let ns = if model_name == "rnnnoise" {
             NsState::RnnNoise(RnnNoiseProcessor::new(input_rate, output_rate, vol))
         } else {
@@ -515,8 +542,6 @@ pub fn start_monitoring(
             ))
         };
         Some(Arc::new(Mutex::new(ns)))
-    } else {
-        None
     };
 
     let last_emit = Arc::new(Mutex::new(Instant::now()));
@@ -640,34 +665,50 @@ pub fn start_monitoring(
 
 fn push_mono_to_buffers(
     shared: Option<&Arc<Mutex<NsState>>>,
-    resampler: &mut LinearResampler,
+    rec_resampler: &mut LinearResampler,
     rec_buffer: &Mutex<VecDeque<f32>>,
     mono: f32,
+    raw_input_rate_hz: f32,
     sum: &mut f32,
     frames: &mut f32,
 ) {
-    if let Some(shared) = shared {
-        let mut s = shared.lock().unwrap();
-        if let Some(samples) = s.push_sample(mono) {
-            for sample in samples {
-                resampler.process_sample(sample, |out| {
-                    let mut rec_buf = rec_buffer.lock().unwrap();
-                    if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-                        rec_buf.pop_front();
-                    }
-                    rec_buf.push_back(out);
-                });
+    // Collect (produced_rate, samples) without holding locks while pushing into rec_buffer.
+    let (produced_rate_hz, samples_opt): (f32, Option<Vec<f32>>) = if let Some(shared) = shared {
+        let mut guard = shared.lock().unwrap();
+        let rate = guard.produced_rate_hz();
+        let samples = guard.push_sample(mono);
+        (rate, samples)
+    } else {
+        (raw_input_rate_hz, Some(vec![mono]))
+    };
+
+    if let Some(samples) = samples_opt {
+        let target_rate_hz = recording::SAMPLE_RATE as f32;
+
+        // Reconfigure resampler only if rates changed (don't reset it every call).
+        let (cur_in, cur_out) = rec_resampler.rates();
+        if (cur_in - produced_rate_hz).abs() >= 1.0 || (cur_out - target_rate_hz).abs() >= 1.0 {
+            rec_resampler.set_rates(produced_rate_hz, target_rate_hz);
+        }
+
+        // Resample into a temp vec to avoid locking the recording buffer per emitted sample.
+        let mut out = Vec::with_capacity(samples.len().saturating_mul(2));
+        for s in samples {
+            rec_resampler.process_sample(s, |o| out.push(o));
+        }
+
+        if !out.is_empty() {
+            let mut rec_buf = rec_buffer.lock().unwrap();
+            let max_len = recording::SAMPLE_RATE * 10;
+            for sample in out {
+                if rec_buf.len() >= max_len {
+                    rec_buf.pop_front();
+                }
+                rec_buf.push_back(sample);
             }
         }
-    } else {
-        resampler.process_sample(mono, |out| {
-            let mut rec_buf = rec_buffer.lock().unwrap();
-            if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-                rec_buf.pop_front();
-            }
-            rec_buf.push_back(out);
-        });
     }
+
     *sum += mono * mono;
     *frames += 1.0;
 }
@@ -685,10 +726,8 @@ fn build_input_stream_f32<F>(
 where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
-    // State for resampling if needed (when no shared state processing)
     let input_rate = config.sample_rate as f32;
-    let target_rate = 48000.0;
-    let mut resampler = LinearResampler::new(input_rate, target_rate);
+    let mut resampler = LinearResampler::new(input_rate, recording::SAMPLE_RATE as f32);
 
     device
         .build_input_stream(
@@ -705,6 +744,7 @@ where
                             &mut resampler,
                             &rec_buffer,
                             mono,
+                            input_rate,
                             &mut sum,
                             &mut frames,
                         );
@@ -714,6 +754,7 @@ where
                             &mut resampler,
                             &rec_buffer,
                             mono,
+                            input_rate,
                             &mut sum,
                             &mut frames,
                         );
@@ -747,10 +788,8 @@ fn build_input_stream_i16<F>(
 where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
-    // State for resampling
     let input_rate = config.sample_rate as f32;
-    let target_rate = 48000.0;
-    let mut resampler = LinearResampler::new(input_rate, target_rate);
+    let mut resampler = LinearResampler::new(input_rate, recording::SAMPLE_RATE as f32);
 
     device
         .build_input_stream(
@@ -768,6 +807,7 @@ where
                             &mut resampler,
                             &rec_buffer,
                             mono,
+                            input_rate,
                             &mut sum,
                             &mut frames,
                         );
@@ -777,6 +817,7 @@ where
                             &mut resampler,
                             &rec_buffer,
                             mono,
+                            input_rate,
                             &mut sum,
                             &mut frames,
                         );
@@ -810,10 +851,8 @@ fn build_input_stream_u16<F>(
 where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
-    // State for resampling
     let input_rate = config.sample_rate as f32;
-    let target_rate = 48000.0;
-    let mut resampler = LinearResampler::new(input_rate, target_rate);
+    let mut resampler = LinearResampler::new(input_rate, recording::SAMPLE_RATE as f32);
 
     device
         .build_input_stream(
@@ -834,6 +873,7 @@ where
                             &mut resampler,
                             &rec_buffer,
                             mono,
+                            input_rate,
                             &mut sum,
                             &mut frames,
                         );
@@ -843,6 +883,7 @@ where
                             &mut resampler,
                             &rec_buffer,
                             mono,
+                            input_rate,
                             &mut sum,
                             &mut frames,
                         );
