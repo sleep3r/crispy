@@ -28,6 +28,7 @@ use recording::RecordingState;
 use tauri::tray::{TrayIconEvent};
 use tauri::Manager;
 use tauri_plugin_positioner;
+use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
 fn get_platform() -> Result<String, String> {
@@ -51,6 +52,10 @@ fn main() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![]),
+        ))
         .manage(AppState {
             audio: Arc::new(Mutex::new(AudioMonitorState::new())),
             recording: Arc::new(Mutex::new(RecordingState::new())),
@@ -80,6 +85,14 @@ fn main() {
                             *guard = app_settings.selected_transcription_model;
                         }
                     }
+                }
+                
+                // Apply autostart setting
+                let autostart_manager = app.handle().autolaunch();
+                if app_settings.autostart_enabled {
+                    let _ = autostart_manager.enable();
+                } else {
+                    let _ = autostart_manager.disable();
                 }
             }
 
@@ -226,6 +239,7 @@ fn main() {
             commands::transcription::set_transcription_chat_history,
             commands::settings::get_app_settings,
             commands::settings::set_app_setting,
+            commands::settings::set_autostart,
             commands::convert::convert_to_wav,
             commands::convert::check_ffmpeg,
         ])

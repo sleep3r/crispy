@@ -61,7 +61,16 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
             #[cfg(not(target_os = "macos"))]
             let _ = window.set_focus();
             #[cfg(target_os = "macos")]
-            let _ = window.move_window(Position::TrayBottomCenter);
+            {
+                let _ = window.move_window(Position::TrayBottomCenter);
+                // After Finder activation workaround, we need to restore focus to the tray window
+                // Small delay to ensure window is fully shown
+                let window_clone = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    let _ = window_clone.set_focus();
+                });
+            }
             #[cfg(not(target_os = "macos"))]
             let _ = window.move_window(Position::TrayCenter);
         }
@@ -87,7 +96,16 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
         #[cfg(not(target_os = "macos"))]
         let _ = window.set_focus();
         #[cfg(target_os = "macos")]
-        let _ = window.move_window(Position::TrayBottomCenter);
+        {
+            let _ = window.move_window(Position::TrayBottomCenter);
+            // After Finder activation workaround, we need to restore focus to the tray window
+            // Small delay to ensure window is fully shown
+            let window_clone = window.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let _ = window_clone.set_focus();
+            });
+        }
         #[cfg(not(target_os = "macos"))]
         let _ = window.move_window(Position::TrayCenter);
     }

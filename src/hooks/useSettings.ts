@@ -7,7 +7,8 @@ type SettingKey =
   | "microphone_volume"
   | "selected_model"
   | "selected_transcription_model"
-  | "selected_recording_app";
+  | "selected_recording_app"
+  | "autostart_enabled";
 
 interface AudioDevice {
   id: string;
@@ -21,6 +22,7 @@ interface SettingsState {
   selected_model: string;
   selected_transcription_model: string;
   selected_recording_app: string;
+  autostart_enabled?: boolean;
 }
 
 const defaultSettings: SettingsState = {
@@ -30,6 +32,7 @@ const defaultSettings: SettingsState = {
   selected_model: "dummy",
   selected_transcription_model: "none",
   selected_recording_app: "none",
+  autostart_enabled: false,
 };
 
 let settingsState: SettingsState = { ...defaultSettings };

@@ -2,6 +2,7 @@ import React from "react";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { RecordingsDirectory } from "./RecordingsDirectory";
 import { LlmSettings } from "./LlmSettings";
+import { AutostartToggle } from "./AutostartToggle";
 
 export const SettingsPage: React.FC = () => {
   return (
@@ -12,6 +13,13 @@ export const SettingsPage: React.FC = () => {
           Paths and other app preferences.
         </p>
       </div>
+
+      <SettingsGroup
+        title="Application"
+        description="App startup and behavior preferences."
+      >
+        <AutostartToggle grouped />
+      </SettingsGroup>
 
       <SettingsGroup
         title="Recording"
