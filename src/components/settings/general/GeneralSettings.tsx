@@ -11,6 +11,12 @@ import { AppSelector } from "../AppSelector";
 import { useBlackHoleStatus } from "../../../hooks/useBlackHoleStatus";
 import { useSettings } from "../../../hooks/useSettings";
 
+interface RecordableApp {
+  id: string;
+  name: string;
+  bundle_id: string;
+}
+
 export const GeneralSettings: React.FC = () => {
   const { status, isLoading, error, refresh } = useBlackHoleStatus();
   const { getSetting } = useSettings();
@@ -20,12 +26,28 @@ export const GeneralSettings: React.FC = () => {
   const selectedOutput = getSetting("selected_output_device");
   const showOutputHint = !selectedOutput;
   const [currentPlatform, setCurrentPlatform] = useState<string>("");
+  const [availableApps, setAvailableApps] = useState<RecordableApp[]>([]);
+  const [appsLoaded, setAppsLoaded] = useState(false);
 
   useEffect(() => {
     invoke<string>("get_platform")
       .then(setCurrentPlatform)
       .catch(() => setCurrentPlatform(""));
   }, []);
+
+  useEffect(() => {
+    if (currentPlatform === "windows") {
+      invoke<RecordableApp[]>("get_recordable_apps")
+        .then((apps) => {
+          setAvailableApps(apps);
+          setAppsLoaded(true);
+        })
+        .catch(() => {
+          setAvailableApps([]);
+          setAppsLoaded(true);
+        });
+    }
+  }, [currentPlatform]);
 
   const handleOpenVBAudio = async () => {
     try {
@@ -154,7 +176,7 @@ export const GeneralSettings: React.FC = () => {
         description="Record meetings with processed mic + app audio."
       >
         <AppSelector grouped />
-        {currentPlatform === "windows" && (
+        {currentPlatform === "windows" && appsLoaded && availableApps.length === 0 && (
           <div className="px-3 py-2 rounded-lg border border-blue-500/30 bg-blue-500/10 text-xs text-blue-800">
             <strong>Windows 10 2004+ required:</strong> App audio capture uses Process Loopback (requires Windows 10 build 19041 or newer). If capture fails, only microphone audio will be recorded.
           </div>
