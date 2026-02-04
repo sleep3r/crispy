@@ -25,7 +25,7 @@ use windows_implement::implement;
 
 #[cfg(target_os = "windows")]
 use windows62::{
-    core::{Interface, Result as WinResult, HSTRING},
+    core::{Interface, Result as WinResult, HSTRING, PROPVARIANT},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
@@ -36,6 +36,7 @@ use windows62::{
                 TH32CS_SNAPPROCESS,
             },
             Threading::{CreateEventW, SetEvent, WaitForSingleObject, INFINITE},
+            Variant::VT_BLOB,
         },
     },
 };
@@ -272,26 +273,48 @@ fn capture_process_loopback(
     // Virtual device ID for process loopback
     let device_id = HSTRING::from("VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK");
 
+    // Build activation params
     let activation_params = AUDIOCLIENT_ACTIVATION_PARAMS {
         ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
         Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
             ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
                 TargetProcessId: pid,
-                // Include child processes (for multi-process apps like Chrome/Edge)
                 ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
             },
         },
     };
 
+    // Wrap activation params in PROPVARIANT(VT_BLOB) as required by WASAPI
+    // Keep activation_params alive for the entire async operation
+    let activation_params_bytes = unsafe {
+        std::slice::from_raw_parts(
+            &activation_params as *const _ as *const u8,
+            std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>(),
+        )
+    };
+
+    let mut prop_variant = PROPVARIANT::default();
+    unsafe {
+        prop_variant.Anonymous.Anonymous.Anonymous.vt = VT_BLOB.0 as u16;
+        prop_variant.Anonymous.Anonymous.Anonymous.blob.cbSize = activation_params_bytes.len() as u32;
+        prop_variant.Anonymous.Anonymous.Anonymous.blob.pBlobData = activation_params_bytes.as_ptr() as *mut u8;
+    }
+
+    println!("Starting WASAPI activation for PID {}", pid);
+    println!("  Format: 48kHz stereo float32");
+    println!("  Mode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE");
+
     unsafe {
         windows62::Win32::Media::Audio::ActivateAudioInterfaceAsync(
             &device_id,
             &IAudioClient::IID,
-            Some(std::ptr::addr_of!(activation_params).cast()),
+            Some(&prop_variant as *const _ as *const _),
             &handler,
         )
         .map_err(|e| format!("ActivateAudioInterfaceAsync failed: {e}"))?;
     };
+
+    println!("Waiting for activation to complete...");
 
     unsafe { WaitForSingleObject(done, INFINITE) };
     unsafe {
@@ -310,17 +333,33 @@ fn capture_process_loopback(
         .cast()
         .map_err(|e| format!("Failed to cast to IAudioClient: {e}"))?;
 
-    // Get mix format
-    let pwfx = unsafe { audio_client.GetMixFormat() }
-        .map_err(|e| format!("GetMixFormat failed: {e}"))?;
-    
-    let mix = unsafe { *pwfx };
-    let in_rate = mix.nSamplesPerSec as u32;
-    let in_channels = mix.nChannels as usize;
+    println!("Activation completed successfully");
 
-    // Initialize audio client for capture
+    // For process loopback, don't use GetMixFormat (it's unreliable/unsupported)
+    // Instead, specify our own format: 48kHz, stereo, float32
+    let in_rate: u32 = 48000;
+    let in_channels: usize = 2;
+    let bits_per_sample: u16 = 32;
+    let block_align: u16 = (in_channels as u16) * (bits_per_sample / 8);
+    let avg_bytes_per_sec: u32 = in_rate * (block_align as u32);
+
+    let wave_format = WAVEFORMATEX {
+        wFormatTag: WAVE_FORMAT_IEEE_FLOAT as u16,
+        nChannels: in_channels as u16,
+        nSamplesPerSec: in_rate,
+        nAvgBytesPerSec: avg_bytes_per_sec,
+        nBlockAlign: block_align,
+        wBitsPerSample: bits_per_sample,
+        cbSize: 0,
+    };
+
+    // Initialize audio client with our format
+    // Add AUTOCONVERTPCM and SRC_DEFAULT_QUALITY for robustness
     let hns_buffer_duration: i64 = 0;
-    let stream_flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_LOOPBACK;
+    let stream_flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK 
+        | AUDCLNT_STREAMFLAGS_LOOPBACK
+        | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+        | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
 
     unsafe {
         audio_client
@@ -329,7 +368,7 @@ fn capture_process_loopback(
                 stream_flags,
                 hns_buffer_duration,
                 0,
-                pwfx,
+                &wave_format as *const _ as *const _,
                 None,
             )
             .map_err(|e| format!("IAudioClient::Initialize failed: {e}"))?;
@@ -346,8 +385,13 @@ fn capture_process_loopback(
 
     unsafe { audio_client.Start() }.map_err(|e| format!("Start failed: {e}"))?;
 
+    println!("Audio capture started successfully");
+
     // Capture loop
     let mut temp_mono: Vec<f32> = Vec::with_capacity(4096);
+    let mut total_frames_captured = 0u64;
+    let mut packet_count = 0u64;
+    let mut last_log_time = std::time::Instant::now();
 
     while !stop.load(Ordering::SeqCst) {
         // Wait for audio data (with timeout to check stop flag)
@@ -366,6 +410,9 @@ fn capture_process_loopback(
                 break;
             }
 
+            packet_count += 1;
+            total_frames_captured += packet_frames as u64;
+
             let (data_ptr, num_frames, flags) = unsafe {
                 let mut data_ptr: *mut u8 = std::ptr::null_mut();
                 let mut num_frames: u32 = 0;
@@ -382,7 +429,7 @@ fn capture_process_loopback(
             if is_silent || data_ptr.is_null() || num_frames == 0 {
                 temp_mono.resize(num_frames as usize, 0.0);
             } else {
-                // Assume float32 interleaved (common for shared-mode)
+                // We explicitly requested float32, so this is safe
                 let samples = unsafe {
                     std::slice::from_raw_parts(
                         data_ptr as *const f32,
@@ -390,13 +437,17 @@ fn capture_process_loopback(
                     )
                 };
 
-                // Downmix to mono
+                // Downmix stereo to mono
                 for frame in samples.chunks(in_channels) {
-                    let mut sum = 0.0f32;
-                    for &s in frame {
-                        sum += s;
-                    }
-                    temp_mono.push(sum / in_channels.max(1) as f32);
+                    let mono_sample = if in_channels == 2 {
+                        (frame[0] + frame[1]) / 2.0
+                    } else if in_channels == 1 {
+                        frame[0]
+                    } else {
+                        // Fallback for unexpected channel counts
+                        frame.iter().sum::<f32>() / in_channels as f32
+                    };
+                    temp_mono.push(mono_sample);
                 }
             }
 
@@ -406,14 +457,8 @@ fn capture_process_loopback(
                     .map_err(|e| format!("ReleaseBuffer failed: {e}"))?;
             }
 
-            // Resample if needed (most systems are 48kHz already)
-            let out = if in_rate == 48_000 {
-                &temp_mono[..]
-            } else {
-                // TODO: Add proper resampling using rubato if needed
-                // For now, just pass through (most systems will be 48kHz)
-                &temp_mono[..]
-            };
+            // No resampling needed - we're already at 48kHz
+            let out = &temp_mono[..];
 
             // Push to shared ring buffer
             {
@@ -427,13 +472,25 @@ fn capture_process_loopback(
                 }
             }
         }
+
+        // Log stats every 5 seconds
+        if last_log_time.elapsed().as_secs() >= 5 {
+            println!(
+                "WASAPI capture stats: {} packets, {} frames (~{:.1}s of audio)",
+                packet_count,
+                total_frames_captured,
+                total_frames_captured as f64 / 48000.0
+            );
+            last_log_time = std::time::Instant::now();
+            packet_count = 0;
+            total_frames_captured = 0;
+        }
     }
 
     // Cleanup
     unsafe {
         let _ = audio_client.Stop();
         let _ = CloseHandle(ready_event);
-        CoTaskMemFree(Some(pwfx.cast()));
     }
 
     Ok(())

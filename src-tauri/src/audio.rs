@@ -361,7 +361,23 @@ pub fn start_monitoring(
     }
     .ok_or("Failed to find input device")?;
 
-    let config = device.default_input_config().map_err(|e| e.to_string())?;
+    // Try to force 48kHz to avoid pitch issues
+    let default_config = device.default_input_config().map_err(|e| e.to_string())?;
+    
+    // Check if we can use 48kHz
+    let config = if let Ok(mut configs) = device.supported_input_configs() {
+        if let Some(range) = configs.find(|c| c.min_sample_rate() <= 48000 && c.max_sample_rate() >= 48000) {
+            // Device supports 48kHz - use it
+            range.with_sample_rate(48000)
+        } else {
+            eprintln!("Warning: Device doesn't support 48kHz, using default ({}Hz)", default_config.sample_rate());
+            default_config
+        }
+    } else {
+        eprintln!("Warning: Could not query supported configs, using default");
+        default_config
+    };
+
     let input_channels = config.channels() as usize;
     let input_sample_format = config.sample_format();
     let input_config: cpal::StreamConfig = config.clone().into();
