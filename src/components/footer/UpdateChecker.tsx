@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { check, Update } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { restart } from "@tauri-apps/plugin-process";
 import { Download } from "lucide-react";
 
 export function UpdateChecker() {
@@ -73,11 +73,11 @@ export function UpdateChecker() {
       // Give the system a moment to finalize the installation
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      console.log("Relaunching application...");
+      console.log("Restarting application...");
       try {
-        await relaunch();
+        await restart();
       } catch (err) {
-        console.error("Relaunch failed:", err);
+        console.error("Restart failed:", err);
         // Fallback: show message to user
         alert("Update installed successfully. Please restart the application manually.");
       }
