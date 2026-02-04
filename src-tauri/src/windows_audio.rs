@@ -25,12 +25,13 @@ use windows_implement::implement;
 
 #[cfg(target_os = "windows")]
 use windows62::{
-    core::{Interface, Result as WinResult, HSTRING, PROPVARIANT},
+    core::{Interface, Result as WinResult, HSTRING},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
         System::{
-            Com::{CoInitializeEx, CoTaskMemFree, COINIT_MULTITHREADED},
+            Com::{CoInitializeEx, COINIT_MULTITHREADED},
+            Com::StructuredStorage::PROPVARIANT,
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
                 TH32CS_SNAPPROCESS,
@@ -40,6 +41,9 @@ use windows62::{
         },
     },
 };
+
+#[cfg(target_os = "windows")]
+const WAVE_FORMAT_IEEE_FLOAT_TAG: u16 = 3;
 
 #[cfg(target_os = "windows")]
 use crate::recording::RecordableApp;
@@ -344,7 +348,7 @@ fn capture_process_loopback(
     let avg_bytes_per_sec: u32 = in_rate * (block_align as u32);
 
     let wave_format = WAVEFORMATEX {
-        wFormatTag: WAVE_FORMAT_IEEE_FLOAT as u16,
+        wFormatTag: WAVE_FORMAT_IEEE_FLOAT_TAG,
         nChannels: in_channels as u16,
         nSamplesPerSec: in_rate,
         nAvgBytesPerSec: avg_bytes_per_sec,
