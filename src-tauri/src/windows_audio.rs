@@ -19,24 +19,29 @@ use std::{
     },
     thread,
 };
+#[cfg(target_os = "windows")]
+use std::collections::{HashMap, HashSet};
 
 #[cfg(target_os = "windows")]
 use windows_implement::implement;
 
 #[cfg(target_os = "windows")]
 use windows62::{
-    core::{Interface, Result as WinResult, HSTRING},
+    core::{Interface, Result as WinResult},
     Win32::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
         System::{
-            Com::{CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, COINIT_MULTITHREADED},
-            Com::StructuredStorage::{PROPVARIANT, PropVariantClear},
+            Com::{CoInitializeEx, CoTaskMemAlloc, COINIT_APARTMENTTHREADED},
+            Com::StructuredStorage::{PropVariantClear, PROPVARIANT},
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
                 TH32CS_SNAPPROCESS,
             },
-            Threading::{CreateEventW, SetEvent, WaitForSingleObject, INFINITE},
+            Threading::{
+                CreateEventW, SetEvent, WaitForSingleObject, OpenProcess,
+                PROCESS_QUERY_LIMITED_INFORMATION, INFINITE,
+            },
             Variant::VT_BLOB,
         },
     },
@@ -49,6 +54,11 @@ const WAVE_FORMAT_IEEE_FLOAT_TAG: u16 = 3;
 use crate::recording::RecordableApp;
 
 #[cfg(target_os = "windows")]
+fn audio_debug_enabled() -> bool {
+    std::env::var("CRISPY_AUDIO_DEBUG").is_ok()
+}
+
+#[cfg(target_os = "windows")]
 pub fn get_recordable_apps_windows() -> Result<Vec<RecordableApp>, String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
@@ -58,7 +68,14 @@ pub fn get_recordable_apps_windows() -> Result<Vec<RecordableApp>, String> {
             return Err("Invalid snapshot handle".to_string());
         }
 
-        let mut apps = Vec::new();
+        #[derive(Clone)]
+        struct ProcEntry {
+            name: String,
+            pid: u32,
+            parent_pid: u32,
+        }
+
+        let mut entries = Vec::new();
         let mut entry = PROCESSENTRY32 {
             dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
             ..Default::default()
@@ -83,11 +100,10 @@ pub fn get_recordable_apps_windows() -> Result<Vec<RecordableApp>, String> {
                     && !is_system_process(&process_name)
                 {
                     let name = process_name.trim_end_matches(".exe").to_string();
-
-                    apps.push(RecordableApp {
-                        id: format!("{}_{}", name, entry.th32ProcessID),
-                        name: name.clone(),
-                        bundle_id: name,
+                    entries.push(ProcEntry {
+                        name,
+                        pid: entry.th32ProcessID,
+                        parent_pid: entry.th32ParentProcessID,
                     });
                 }
 
@@ -99,11 +115,28 @@ pub fn get_recordable_apps_windows() -> Result<Vec<RecordableApp>, String> {
 
         let _ = CloseHandle(snapshot);
 
-        // Sort by name
-        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        let mut apps = Vec::new();
+        let mut groups: HashMap<String, Vec<ProcEntry>> = HashMap::new();
+        for proc in entries {
+            groups.entry(proc.name.to_lowercase()).or_default().push(proc);
+        }
 
-        // Remove duplicates by name (keep first occurrence)
-        apps.dedup_by(|a, b| a.name.to_lowercase() == b.name.to_lowercase());
+        for (_name_lower, mut procs) in groups {
+            procs.sort_by_key(|p| p.pid);
+            let pid_set: HashSet<u32> = procs.iter().map(|p| p.pid).collect();
+            let root = procs
+                .iter()
+                .find(|p| !pid_set.contains(&p.parent_pid))
+                .unwrap_or(&procs[0]);
+
+            apps.push(RecordableApp {
+                id: format!("{}_{}", root.name, root.pid),
+                name: root.name.clone(),
+                bundle_id: root.name.clone(),
+            });
+        }
+
+        apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
         // Add "None" option at the beginning
         apps.insert(
@@ -245,12 +278,26 @@ pub fn start_app_audio_capture_windows(
 ) -> Result<std::thread::JoinHandle<()>, String> {
     let pid = parse_pid(app_id)?;
 
+    // Check Windows version (Process Loopback requires Windows 10 2004+, build 19041+)
+    let version = get_windows_build_number();
+    if version < 19041 {
+        return Err(format!(
+            "Process Loopback requires Windows 10 build 19041 or later (current: {})",
+            version
+        ));
+    }
+    if audio_debug_enabled() {
+        println!("Windows build: {} (Process Loopback supported)", version);
+    }
+
     let handle = thread::spawn({
         let app_buffer = app_buffer.clone();
         let stop = stop.clone();
         move || {
             if let Err(e) = capture_process_loopback(pid, app_buffer, stop) {
                 eprintln!("Process loopback capture error: {e}");
+                eprintln!("Note: On Windows ARM64, some applications may not support audio capture.");
+                eprintln!("Try selecting a different process or running this app as Administrator.");
             }
         }
     });
@@ -259,12 +306,37 @@ pub fn start_app_audio_capture_windows(
 }
 
 #[cfg(target_os = "windows")]
+fn get_windows_build_number() -> u32 {
+    use winreg::RegKey;
+    let hklm = RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE);
+    if let Ok(key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion") {
+        if let Ok(build) = key.get_value::<String, _>("CurrentBuildNumber") {
+            if let Ok(num) = build.parse::<u32>() {
+                return num;
+            }
+        }
+    }
+    0
+}
+
+#[cfg(target_os = "windows")]
 fn capture_process_loopback(
     pid: u32,
     app_buffer: Arc<Mutex<VecDeque<f32>>>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // Verify process exists before attempting loopback
+    let process_handle = unsafe {
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+            .map_err(|e| format!("Process PID {} not found or no access: {}", pid, e))?
+    };
+    unsafe { CloseHandle(process_handle).ok(); }
+
+    if audio_debug_enabled() {
+        println!("Process PID {} verified, starting WASAPI activation", pid);
+    }
+
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
 
     // Create event for activation completion
     let done = unsafe { CreateEventW(None, true, false, None) }
@@ -274,60 +346,43 @@ fn capture_process_loopback(
     let handler = ActivateHandler::new(done, activation_result.clone());
     let handler: IActivateAudioInterfaceCompletionHandler = handler.into();
 
-    // Virtual device ID for process loopback
-    let device_id = HSTRING::from("VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK");
+    // Virtual device ID for process loopback (PCWSTR constant)
+    let device_id = VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK;
 
-    // Build activation params
-    // IMPORTANT: Zero-initialize first to avoid undefined behavior in padding
-    let mut activation_params: AUDIOCLIENT_ACTIVATION_PARAMS = unsafe { std::mem::zeroed() };
-    activation_params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
-    activation_params.Anonymous.ProcessLoopbackParams.TargetProcessId = pid;
-    activation_params.Anonymous.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+    // Allocate activation params in COM memory and zero-init
+    let activation_size = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>();
+    let activation_ptr = unsafe { CoTaskMemAlloc(activation_size) } as *mut AUDIOCLIENT_ACTIVATION_PARAMS;
+    if activation_ptr.is_null() {
+        return Err("CoTaskMemAlloc failed".to_string());
+    }
+    unsafe {
+        std::ptr::write_bytes(activation_ptr as *mut u8, 0, activation_size);
+        (*activation_ptr).ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+        (*activation_ptr).Anonymous.ProcessLoopbackParams = AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+            TargetProcessId: pid,
+            ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
+        };
+    }
 
-    let activation_params_bytes = unsafe {
-        std::slice::from_raw_parts(
-            &activation_params as *const _ as *const u8,
-            std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>(),
-        )
-    };
-
-    // PROPVARIANT setup with CoTaskMemAlloc + ManuallyDrop
-    // We MUST use CoTaskMemAlloc because PropVariantClear will try to free it
-    // We MUST use ManuallyDrop to prevent premature freeing before activation completes
+    // PROPVARIANT setup
     let mut prop_variant = unsafe {
         let mut pv: PROPVARIANT = std::mem::zeroed();
-        
-        // Allocate COM memory
-        let p_data = CoTaskMemAlloc(activation_params_bytes.len());
-        if p_data.is_null() {
-            return Err("CoTaskMemAlloc failed".to_string());
-        }
-        
-        // Copy data to COM memory
-        std::ptr::copy_nonoverlapping(
-            activation_params_bytes.as_ptr(), 
-            p_data as *mut u8, 
-            activation_params_bytes.len()
-        );
-
-        // Access inner fields
         let inner = &mut *pv.Anonymous.Anonymous;
         inner.vt = VT_BLOB;
-        
         let blob = &mut inner.Anonymous.blob;
-        blob.cbSize = activation_params_bytes.len() as u32;
-        blob.pBlobData = p_data as *mut u8;
-
+        blob.cbSize = activation_size as u32;
+        blob.pBlobData = activation_ptr as *mut u8;
         std::mem::ManuallyDrop::new(pv)
     };
 
-    println!("Starting WASAPI activation for PID {}", pid);
-    println!("  Format: 48kHz stereo float32");
-    println!("  Mode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE");
+    if audio_debug_enabled() {
+        println!("  Format: 48kHz stereo float32");
+        println!("  Mode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE");
+    }
 
     unsafe {
         windows62::Win32::Media::Audio::ActivateAudioInterfaceAsync(
-            &device_id,
+            device_id,
             &IAudioClient::IID,
             Some(&*prop_variant as *const _ as *const _),
             &handler,
@@ -339,7 +394,9 @@ fn capture_process_loopback(
         })?;
     };
 
-    println!("Waiting for activation to complete...");
+    if audio_debug_enabled() {
+        println!("Waiting for activation to complete...");
+    }
 
     unsafe { WaitForSingleObject(done, INFINITE) };
     unsafe { CloseHandle(done).ok(); }
@@ -362,7 +419,9 @@ fn capture_process_loopback(
         .cast()
         .map_err(|e| format!("Failed to cast to IAudioClient: {e}"))?;
 
-    println!("Activation completed successfully");
+    if audio_debug_enabled() {
+        println!("Activation completed successfully");
+    }
 
     // For process loopback, don't use GetMixFormat (it's unreliable/unsupported)
     // Instead, specify our own format: 48kHz, stereo, float32
@@ -414,7 +473,9 @@ fn capture_process_loopback(
 
     unsafe { audio_client.Start() }.map_err(|e| format!("Start failed: {e}"))?;
 
-    println!("Audio capture started successfully");
+    if audio_debug_enabled() {
+        println!("Audio capture started successfully");
+    }
 
     // Capture loop
     let mut temp_mono: Vec<f32> = Vec::with_capacity(4096);
@@ -508,7 +569,7 @@ fn capture_process_loopback(
         }
 
         // Log stats every 5 seconds
-        if last_log_time.elapsed().as_secs() >= 5 {
+        if audio_debug_enabled() && last_log_time.elapsed().as_secs() >= 5 {
             println!(
                 "WASAPI capture stats: {} packets ({} silent), {} frames (~{:.1}s)",
                 packet_count,

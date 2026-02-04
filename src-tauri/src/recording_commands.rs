@@ -165,7 +165,9 @@ fn start_recording_worker(
         let mut right_frame = vec![0.0f32; frame_size];
         let mut frames_encoded = 0;
 
-        println!("Recording worker started");
+        if std::env::var("CRISPY_AUDIO_DEBUG").is_ok() {
+            println!("Recording worker started");
+        }
 
         while RECORDING_ACTIVE.load(Ordering::SeqCst) {
             {
@@ -214,7 +216,7 @@ fn start_recording_worker(
                         break;
                     }
                     frames_encoded += 1;
-                    if frames_encoded % 100 == 0 {
+                    if std::env::var("CRISPY_AUDIO_DEBUG").is_ok() && frames_encoded % 100 == 0 {
                         println!("Wrote {} frames", frames_encoded);
                     }
                 } else {
@@ -223,10 +225,12 @@ fn start_recording_worker(
             }
         }
 
-        println!(
-            "Recording worker stopped. Total frames encoded: {}",
-            frames_encoded
-        );
+        if std::env::var("CRISPY_AUDIO_DEBUG").is_ok() {
+            println!(
+                "Recording worker stopped. Total frames encoded: {}",
+                frames_encoded
+            );
+        }
         RECORDING_ACTIVE.store(false, Ordering::SeqCst);
     })
 }

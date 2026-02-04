@@ -42,6 +42,10 @@ fn get_platform() -> Result<String, String> {
 }
 
 fn main() {
+    // Reduce noisy native logs (if supported by dependencies).
+    std::env::set_var("CPUINFO_LOG_LEVEL", "fatal");
+    std::env::set_var("GGML_LOG_LEVEL", "error");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())

@@ -5,30 +5,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use screencapturekit::stream::sc_stream::SCStream;
 
-/// Resample audio from one sample rate to another using linear interpolation
-fn resample_audio(input: &[f32], input_rate: usize, output_rate: usize) -> Vec<f32> {
-    if input.is_empty() || input_rate == output_rate {
-        return input.to_vec();
-    }
-    
-    let ratio = input_rate as f64 / output_rate as f64;
-    let output_len = (input.len() as f64 / ratio).ceil() as usize;
-    let mut output = Vec::with_capacity(output_len);
-    
-    for i in 0..output_len {
-        let src_idx = i as f64 * ratio;
-        let idx0 = src_idx.floor() as usize;
-        let idx1 = (idx0 + 1).min(input.len() - 1);
-        let frac = src_idx - idx0 as f64;
-        
-        // Linear interpolation
-        let sample = input[idx0] * (1.0 - frac as f32) + input[idx1] * frac as f32;
-        output.push(sample);
-    }
-    
-    output
-}
-
 pub const SAMPLE_RATE: usize = 48000;
 pub const CHANNELS: usize = 2; // Stereo
 

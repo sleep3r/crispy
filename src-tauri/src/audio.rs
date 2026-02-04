@@ -5,9 +5,14 @@ use nnnoiseless::{DenoiseState, FRAME_SIZE as RNNOISE_FRAME_SIZE};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::env;
 use tauri::Emitter;
 
 use crate::recording;
+
+fn audio_debug_enabled() -> bool {
+    env::var("CRISPY_AUDIO_DEBUG").is_ok()
+}
 
 #[derive(serde::Serialize)]
 pub struct AudioDevice {
@@ -59,6 +64,55 @@ struct SharedAudio {
     model: ModelKind,
     volume: f32,
     rng_state: u32,
+}
+
+struct LinearResampler {
+    input_rate: f32,
+    output_rate: f32,
+    last_sample: f32,
+    has_last: bool,
+    input_pos: f64,
+    next_output_pos: f64,
+}
+
+impl LinearResampler {
+    fn new(input_rate: f32, output_rate: f32) -> Self {
+        Self {
+            input_rate,
+            output_rate,
+            last_sample: 0.0,
+            has_last: false,
+            input_pos: 0.0,
+            next_output_pos: 0.0,
+        }
+    }
+
+    fn process_sample<F: FnMut(f32)>(&mut self, sample: f32, mut emit: F) {
+        if (self.input_rate - self.output_rate).abs() < 1.0 {
+            emit(sample);
+            return;
+        }
+
+        if !self.has_last {
+            self.last_sample = sample;
+            self.has_last = true;
+            self.input_pos = 0.0;
+            self.next_output_pos = 0.0;
+            return;
+        }
+
+        self.input_pos += 1.0;
+        let step = (self.input_rate / self.output_rate) as f64;
+
+        while self.next_output_pos <= self.input_pos {
+            let t = ((self.next_output_pos - (self.input_pos - 1.0)) as f32).clamp(0.0, 1.0);
+            let out = self.last_sample + (sample - self.last_sample) * t;
+            emit(out);
+            self.next_output_pos += step;
+        }
+
+        self.last_sample = sample;
+    }
 }
 
 impl SharedAudio {
@@ -370,11 +424,18 @@ pub fn start_monitoring(
             // Device supports 48kHz - use it
             range.with_sample_rate(48000)
         } else {
-            eprintln!("Warning: Device doesn't support 48kHz, using default ({}Hz)", default_config.sample_rate());
+            if audio_debug_enabled() {
+                eprintln!(
+                    "Warning: Device doesn't support 48kHz, using default ({}Hz)",
+                    default_config.sample_rate()
+                );
+            }
             default_config
         }
     } else {
-        eprintln!("Warning: Could not query supported configs, using default");
+        if audio_debug_enabled() {
+            eprintln!("Warning: Could not query supported configs, using default");
+        }
         default_config
     };
 
@@ -551,6 +612,7 @@ pub fn start_monitoring(
 
 fn push_mono_to_buffers(
     shared: Option<&Arc<Mutex<NsState>>>,
+    resampler: &mut LinearResampler,
     rec_buffer: &Mutex<VecDeque<f32>>,
     mono: f32,
     sum: &mut f32,
@@ -559,20 +621,24 @@ fn push_mono_to_buffers(
     if let Some(shared) = shared {
         let mut s = shared.lock().unwrap();
         if let Some(samples) = s.push_sample(mono) {
-            let mut rec_buf = rec_buffer.lock().unwrap();
             for sample in samples {
-                if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-                    rec_buf.pop_front();
-                }
-                rec_buf.push_back(sample);
+                resampler.process_sample(sample, |out| {
+                    let mut rec_buf = rec_buffer.lock().unwrap();
+                    if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                        rec_buf.pop_front();
+                    }
+                    rec_buf.push_back(out);
+                });
             }
         }
     } else {
-        let mut rec_buf = rec_buffer.lock().unwrap();
-        if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
-            rec_buf.pop_front();
-        }
-        rec_buf.push_back(mono);
+        resampler.process_sample(mono, |out| {
+            let mut rec_buf = rec_buffer.lock().unwrap();
+            if rec_buf.len() >= recording::SAMPLE_RATE * 10 {
+                rec_buf.pop_front();
+            }
+            rec_buf.push_back(out);
+        });
     }
     *sum += mono * mono;
     *frames += 1.0;
@@ -594,8 +660,7 @@ where
     // State for resampling if needed (when no shared state processing)
     let input_rate = config.sample_rate as f32;
     let target_rate = 48000.0;
-    let mut resample_pos = 0.0;
-    let mut last_sample = 0.0;
+    let mut resampler = LinearResampler::new(input_rate, target_rate);
 
     device
         .build_input_stream(
@@ -607,80 +672,23 @@ where
                     let mono = frame.iter().sum::<f32>() / input_channels as f32;
                     
                     if let Some(shared) = shared.as_ref() {
-                        // Shared state handles its own resampling/processing
-                        push_mono_to_buffers(Some(shared), &rec_buffer, mono, &mut sum, &mut frames);
+                        push_mono_to_buffers(
+                            Some(shared),
+                            &mut resampler,
+                            &rec_buffer,
+                            mono,
+                            &mut sum,
+                            &mut frames,
+                        );
                     } else {
-                        // Manual resampling if needed
-                        if (input_rate - target_rate).abs() < 1.0 {
-                            // No resampling needed
-                            push_mono_to_buffers(None, &rec_buffer, mono, &mut sum, &mut frames);
-                        } else {
-                            // Linear interpolation resampling
-                            let step = input_rate / target_rate;
-                            // Push current sample to conceptual input buffer
-                            // Since we process 1 sample at a time, we just check if we cross the threshold
-                            
-                            // Algorithm:
-                            // We are moving through output samples.
-                            // resample_pos tracks position in INPUT samples.
-                            // If resample_pos < 1.0, we need to interpolate between last_sample and current mono.
-                            // But here we are driven by INPUT samples coming in.
-                            
-                            // Let's reverse it: simple linear interpolation driven by input is harder 1-by-1.
-                            // Easier: treat 'last_sample' and 'mono' as the two points.
-                            // We generate N output samples between them.
-                            
-                            // Actually, let's keep it simple:
-                            // We have 'mono' (current) and 'last_sample' (previous).
-                            // We advanced by 1.0 input samples.
-                            // We need to output samples while our "output clock" catches up.
-                            
-                            // resample_pos: accumulated input samples not yet output
-                            resample_pos += 1.0;
-                            
-                            while resample_pos >= step {
-                                resample_pos -= step;
-                                // Interpolate
-                                // At this point we are 'resample_pos' fraction past 'last_sample' towards 'mono'? 
-                                // No, wait. Standard algorithm:
-                                // pos += input_step; while pos >= 1.0 { output(); pos -= 1.0; }
-                                // Here we want output rate (48k)
-                                
-                                // Let's use the simplest logic:
-                                // Just duplicate/drop samples? No, bad quality.
-                                // Linear:
-                                // We are between last_sample and mono.
-                                // Where exactly?
-                                
-                                // Let's use a simpler approach: 
-                                // Just feed it to a helper if I can... no helper available easily.
-                                
-                                // Quick & Dirty Linear Resampler for Stream:
-                                // We need to produce output samples at 48kHz.
-                                // Input comes at 'input_rate'.
-                                // Ratio = input / output.
-                                // next_output_time += Ratio.
-                                // If next_output_time < 1.0, we produce a sample.
-                                
-                                // Re-using state:
-                                // resample_pos: time of the next OUTPUT sample relative to current INPUT sample.
-                                // valid range: [0.0, 1.0)
-                                // If resample_pos < 1.0, we output a sample interpolated at that position.
-                                // Then we increment resample_pos by (input / output).
-                                // If resample_pos >= 1.0, we wait for next input sample (which becomes 'last_sample').
-                                // When new input arrives, we decrement resample_pos by 1.0 (since we moved 1.0 input forward).
-                                
-                                let ratio = input_rate / target_rate;
-                                while resample_pos < 1.0 {
-                                    let t = resample_pos;
-                                    let interpolated = last_sample + (mono - last_sample) * t;
-                                    push_mono_to_buffers(None, &rec_buffer, interpolated, &mut sum, &mut frames);
-                                    resample_pos += ratio;
-                                }
-                                resample_pos -= 1.0;
-                            }
-                            last_sample = mono;
-                        }
+                        push_mono_to_buffers(
+                            None,
+                            &mut resampler,
+                            &rec_buffer,
+                            mono,
+                            &mut sum,
+                            &mut frames,
+                        );
                     }
                 }
                 if frames > 0.0 {
@@ -714,8 +722,7 @@ where
     // State for resampling
     let input_rate = config.sample_rate as f32;
     let target_rate = 48000.0;
-    let mut resample_pos = 0.0;
-    let mut last_sample = 0.0;
+    let mut resampler = LinearResampler::new(input_rate, target_rate);
 
     device
         .build_input_stream(
@@ -728,21 +735,23 @@ where
                         / input_channels as f32;
                     
                     if let Some(shared) = shared.as_ref() {
-                        push_mono_to_buffers(Some(shared), &rec_buffer, mono, &mut sum, &mut frames);
+                        push_mono_to_buffers(
+                            Some(shared),
+                            &mut resampler,
+                            &rec_buffer,
+                            mono,
+                            &mut sum,
+                            &mut frames,
+                        );
                     } else {
-                        if (input_rate - target_rate).abs() < 1.0 {
-                            push_mono_to_buffers(None, &rec_buffer, mono, &mut sum, &mut frames);
-                        } else {
-                            let ratio = input_rate / target_rate;
-                            while resample_pos < 1.0 {
-                                let t = resample_pos;
-                                let interpolated = last_sample + (mono - last_sample) * t;
-                                push_mono_to_buffers(None, &rec_buffer, interpolated, &mut sum, &mut frames);
-                                resample_pos += ratio;
-                            }
-                            resample_pos -= 1.0;
-                            last_sample = mono;
-                        }
+                        push_mono_to_buffers(
+                            None,
+                            &mut resampler,
+                            &rec_buffer,
+                            mono,
+                            &mut sum,
+                            &mut frames,
+                        );
                     }
                 }
                 if frames > 0.0 {
@@ -776,8 +785,7 @@ where
     // State for resampling
     let input_rate = config.sample_rate as f32;
     let target_rate = 48000.0;
-    let mut resample_pos = 0.0;
-    let mut last_sample = 0.0;
+    let mut resampler = LinearResampler::new(input_rate, target_rate);
 
     device
         .build_input_stream(
@@ -793,21 +801,23 @@ where
                         / input_channels as f32;
                     
                     if let Some(shared) = shared.as_ref() {
-                        push_mono_to_buffers(Some(shared), &rec_buffer, mono, &mut sum, &mut frames);
+                        push_mono_to_buffers(
+                            Some(shared),
+                            &mut resampler,
+                            &rec_buffer,
+                            mono,
+                            &mut sum,
+                            &mut frames,
+                        );
                     } else {
-                        if (input_rate - target_rate).abs() < 1.0 {
-                            push_mono_to_buffers(None, &rec_buffer, mono, &mut sum, &mut frames);
-                        } else {
-                            let ratio = input_rate / target_rate;
-                            while resample_pos < 1.0 {
-                                let t = resample_pos;
-                                let interpolated = last_sample + (mono - last_sample) * t;
-                                push_mono_to_buffers(None, &rec_buffer, interpolated, &mut sum, &mut frames);
-                                resample_pos += ratio;
-                            }
-                            resample_pos -= 1.0;
-                            last_sample = mono;
-                        }
+                        push_mono_to_buffers(
+                            None,
+                            &mut resampler,
+                            &rec_buffer,
+                            mono,
+                            &mut sum,
+                            &mut frames,
+                        );
                     }
                 }
                 if frames > 0.0 {

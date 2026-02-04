@@ -103,9 +103,9 @@ version-bump: ## Bump version (TYPE=major|minor|patch, default patch)
 	fi; \
 	NEW_VERSION="$$MAJOR.$$MINOR.$$PATCH"; \
 	echo "$(YELLOW)$$CURRENT$(NC) → $(GREEN)$$NEW_VERSION$(NC)"; \
-	sed -i.bak "s/\"version\": \"$$CURRENT\"/\"version\": \"$$NEW_VERSION\"/" package.json && rm package.json.bak; \
-	sed -i.bak "s/version = \"$$CURRENT\"/version = \"$$NEW_VERSION\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak; \
-	sed -i.bak "s/\"version\": \"$$CURRENT\"/\"version\": \"$$NEW_VERSION\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak; \
+	sed -i.bak -E "s/\"version\": \"[^\"]+\"/\"version\": \"$$NEW_VERSION\"/" package.json && rm package.json.bak; \
+	sed -i.bak -E "s/^version = \"[^\"]+\"/version = \"$$NEW_VERSION\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak; \
+	sed -i.bak -E "s/\"version\": \"[^\"]+\"/\"version\": \"$$NEW_VERSION\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak; \
 	echo "$(GREEN)✅ Version updated in all files:$(NC)"; \
 	echo "   • package.json"; \
 	echo "   • src-tauri/Cargo.toml"; \
