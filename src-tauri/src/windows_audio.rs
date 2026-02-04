@@ -302,10 +302,13 @@ fn capture_process_loopback(
         // Access inner struct via union field 'Anonymous' (ManuallyDrop)
         // We must dereference ManuallyDrop to access the struct
         let inner = &mut *prop_variant.Anonymous.Anonymous;
-        inner.vt = VT_BLOB.0 as u16;
         
-        // Access blob via inner struct's 'Anonymous' union field 'blob' (ManuallyDrop)
-        let blob = &mut *inner.Anonymous.blob;
+        // VT_BLOB is already a VARENUM, so we can assign it directly
+        inner.vt = VT_BLOB;
+        
+        // Access blob via inner struct's 'Anonymous' union field 'blob'
+        // BLOB is Copy, so it's not wrapped in ManuallyDrop - no dereference needed
+        let blob = &mut inner.Anonymous.blob;
         blob.cbSize = activation_params_bytes.len() as u32;
         blob.pBlobData = activation_params_bytes.as_ptr() as *mut u8;
     }
