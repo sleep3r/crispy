@@ -299,9 +299,15 @@ fn capture_process_loopback(
 
     let mut prop_variant = PROPVARIANT::default();
     unsafe {
-        prop_variant.Anonymous.Anonymous.Anonymous.vt = VT_BLOB.0 as u16;
-        prop_variant.Anonymous.Anonymous.Anonymous.blob.cbSize = activation_params_bytes.len() as u32;
-        prop_variant.Anonymous.Anonymous.Anonymous.blob.pBlobData = activation_params_bytes.as_ptr() as *mut u8;
+        // Access inner struct via union field 'Anonymous' (ManuallyDrop)
+        // We must dereference ManuallyDrop to access the struct
+        let inner = &mut *prop_variant.Anonymous.Anonymous;
+        inner.vt = VT_BLOB.0 as u16;
+        
+        // Access blob via inner struct's 'Anonymous' union field 'blob' (ManuallyDrop)
+        let blob = &mut *inner.Anonymous.blob;
+        blob.cbSize = activation_params_bytes.len() as u32;
+        blob.pBlobData = activation_params_bytes.as_ptr() as *mut u8;
     }
 
     println!("Starting WASAPI activation for PID {}", pid);
