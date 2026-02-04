@@ -148,9 +148,13 @@ pub async fn check_ffmpeg() -> Result<bool, String> {
     spawn_blocking(|| {
         resolve_ffmpeg_path()
             .and_then(|path| {
-                Command::new(path)
-                    .arg("-version")
-                    .output()
+                let mut cmd = Command::new(path);
+                cmd.arg("-version");
+                #[cfg(target_os = "windows")]
+                {
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+                cmd.output()
                     .ok()
                     .map(|o| o.status.success())
             })
