@@ -65,6 +65,25 @@ fn resolve_ffmpeg_path() -> Option<PathBuf> {
             return Some(PathBuf::from("ffmpeg"));
         }
     }
+
+    // Packaged macOS apps don't inherit shell PATH. Check common locations.
+    let candidates = [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ];
+
+    for candidate in candidates {
+        let path = PathBuf::from(candidate);
+        if path.exists() {
+            if let Ok(output) = Command::new(&path).arg("-version").output() {
+                if output.status.success() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
     None
 }
 

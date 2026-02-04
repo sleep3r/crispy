@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { check, Update } from "@tauri-apps/plugin-updater";
-import { restart } from "@tauri-apps/plugin-process";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { Download } from "lucide-react";
 
 export function UpdateChecker() {
@@ -11,12 +11,8 @@ export function UpdateChecker() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check for updates on mount (with delay to not block UI)
-    const timer = setTimeout(() => {
-      checkForUpdates();
-    }, 2000); // 2 second delay
-
-    return () => clearTimeout(timer);
+    // Check for updates on mount
+    checkForUpdates();
   }, []);
 
   const checkForUpdates = async () => {
@@ -25,15 +21,7 @@ export function UpdateChecker() {
     try {
       setIsChecking(true);
       setError(null);
-      
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise<null>((_, reject) => 
-        setTimeout(() => reject(new Error("Update check timeout")), 10000)
-      );
-      
-      const updatePromise = check();
-      
-      const availableUpdate = await Promise.race([updatePromise, timeoutPromise]);
+      const availableUpdate = await check();
 
       if (availableUpdate?.available) {
         setUpdate(availableUpdate);
@@ -43,8 +31,7 @@ export function UpdateChecker() {
       }
     } catch (err) {
       console.error("Failed to check for updates:", err);
-      // Don't show error on first check - just silently fail
-      setError(null);
+      setError("Failed to check for updates");
     } finally {
       setIsChecking(false);
     }
@@ -86,11 +73,11 @@ export function UpdateChecker() {
       // Give the system a moment to finalize the installation
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      console.log("Restarting application...");
+      console.log("Relaunching application...");
       try {
-        await restart();
+        await relaunch();
       } catch (err) {
-        console.error("Restart failed:", err);
+        console.error("Relaunch failed:", err);
         // Fallback: show message to user
         alert("Update installed successfully. Please restart the application manually.");
       }
