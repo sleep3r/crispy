@@ -191,60 +191,88 @@ struct RnnNoiseProcessor {
     volume: f32,
     first_frame: bool,
     max_output_len: usize,
+    input_resampler: Option<LinearResampler>,
 }
 
 impl RnnNoiseProcessor {
     fn new(input_rate: f32, output_rate: f32, volume: f32) -> Self {
         let max_output_len = input_rate as usize;
+        let (effective_input_rate, input_resampler) = if (input_rate - 48000.0).abs() >= 1.0 {
+            (
+                48000.0,
+                Some(LinearResampler::new(input_rate, 48000.0)),
+            )
+        } else {
+            (input_rate, None)
+        };
+
         Self {
             denoise: DenoiseState::new(),
             input_buf: VecDeque::with_capacity(RNNOISE_FRAME_SIZE * 2),
             output_buf: VecDeque::with_capacity(max_output_len),
             resample_pos: 0.0,
-            input_rate,
+            input_rate: effective_input_rate,
             output_rate,
             volume: volume.clamp(0.0, 1.0),
             first_frame: true,
             max_output_len,
+            input_resampler,
         }
     }
 
     fn push_sample(&mut self, sample: f32) -> Option<Vec<f32>> {
-        if self.input_buf.len() >= self.max_output_len {
-            self.input_buf.pop_front();
-        }
-        self.input_buf.push_back(sample);
+        let mut samples_to_process = Vec::new();
 
-        if self.input_buf.len() < RNNOISE_FRAME_SIZE {
-            return None;
+        if let Some(mut resampler) = self.input_resampler.take() {
+            resampler.process_sample(sample, |s| samples_to_process.push(s));
+            self.input_resampler = Some(resampler);
+        } else {
+            samples_to_process.push(sample);
         }
 
-        let mut input_frame = [0.0f32; 480];
-        for (i, s) in self.input_buf.drain(..RNNOISE_FRAME_SIZE).enumerate() {
-            if i < RNNOISE_FRAME_SIZE {
-                input_frame[i] = s * 32768.0;
+        let mut output_accumulator = Vec::new();
+
+        for s in samples_to_process {
+            if self.input_buf.len() >= self.max_output_len {
+                self.input_buf.pop_front();
+            }
+            self.input_buf.push_back(s);
+
+            if self.input_buf.len() >= RNNOISE_FRAME_SIZE {
+                let mut input_frame = [0.0f32; 480];
+                for (i, val) in self.input_buf.drain(..RNNOISE_FRAME_SIZE).enumerate() {
+                    if i < RNNOISE_FRAME_SIZE {
+                        input_frame[i] = val * 32768.0;
+                    }
+                }
+                let mut output_frame = [0.0f32; 480];
+                self.denoise.process_frame(&mut output_frame[..], &input_frame[..]);
+
+                let out_samples: Vec<f32> = output_frame
+                    .iter()
+                    .map(|&val| (val / 32768.0).clamp(-1.0, 1.0) * self.volume)
+                    .collect();
+
+                if self.first_frame {
+                    self.first_frame = false;
+                    continue;
+                }
+
+                for &out in &out_samples {
+                    if self.output_buf.len() >= self.max_output_len {
+                        self.output_buf.pop_front();
+                    }
+                    self.output_buf.push_back(out);
+                }
+                output_accumulator.extend(out_samples);
             }
         }
-        let mut output_frame = [0.0f32; 480];
-        self.denoise.process_frame(&mut output_frame[..], &input_frame[..]);
 
-        let out_samples: Vec<f32> = output_frame
-            .iter()
-            .map(|&s| (s / 32768.0).clamp(-1.0, 1.0) * self.volume)
-            .collect();
-
-        if self.first_frame {
-            self.first_frame = false;
-            return None;
+        if output_accumulator.is_empty() {
+            None
+        } else {
+            Some(output_accumulator)
         }
-
-        for &out in &out_samples {
-            if self.output_buf.len() >= self.max_output_len {
-                self.output_buf.pop_front();
-            }
-            self.output_buf.push_back(out);
-        }
-        Some(out_samples)
     }
 
     fn next_sample(&mut self) -> f32 {
@@ -476,7 +504,7 @@ pub fn start_monitoring(
         let input_rate = config.sample_rate() as f32;
         let output_rate = output_config.sample_rate() as f32;
         let vol = volume.clamp(0.0, 1.0);
-        let ns = if model_name == "rnnnoise" && (input_rate - 48000.0).abs() < 1.0 {
+        let ns = if model_name == "rnnnoise" {
             NsState::RnnNoise(RnnNoiseProcessor::new(input_rate, output_rate, vol))
         } else {
             NsState::Legacy(SharedAudio::new(
@@ -866,7 +894,7 @@ pub fn set_monitoring_model(
         (v, ir, or)
     };
     let mut guard = shared.lock().unwrap();
-    *guard = if model_name == "rnnnoise" && (input_rate - 48000.0).abs() < 1.0 {
+    *guard = if model_name == "rnnnoise" {
         NsState::RnnNoise(RnnNoiseProcessor::new(input_rate, output_rate, vol))
     } else {
         NsState::Legacy(SharedAudio::new(

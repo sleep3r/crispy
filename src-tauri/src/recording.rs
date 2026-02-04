@@ -9,6 +9,7 @@ pub const SAMPLE_RATE: usize = 48000;
 pub const CHANNELS: usize = 2; // Stereo
 
 /// Resample audio from one sample rate to another using linear interpolation
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn resample_audio(samples: &[f32], from_rate: usize, to_rate: usize) -> Vec<f32> {
     if from_rate == to_rate {
         return samples.to_vec();
