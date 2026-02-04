@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Copy, Check, Send } from "lucide-react";
+import { Copy, Check, Send, ArrowDown } from "lucide-react";
 
 const getPathFromQuery = (): string | null => {
   const params = new URLSearchParams(globalThis.location.search);
@@ -25,15 +25,35 @@ export const TranscriptionResultView: React.FC = () => {
   const [sending, setSending] = useState(false);
   const [llmModelName, setLlmModelName] = useState<string>("Assistant");
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const recordingPathRef = useRef<string | null>(null);
+  const isUserScrolledUpRef = useRef(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
+  // Track if user has scrolled up
+  const handleScroll = () => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    
+    // Consider "at bottom" if within 50px of bottom
+    const isScrolledUp = distanceFromBottom > 50;
+    isUserScrolledUpRef.current = isScrolledUp;
+    setShowScrollButton(isScrolledUp);
+  };
+
   useEffect(() => {
-    scrollToBottom();
+    // Only auto-scroll if user hasn't scrolled up
+    if (!isUserScrolledUpRef.current) {
+      scrollToBottom();
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -180,6 +200,10 @@ export const TranscriptionResultView: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, userMsg, botMsg]);
+    
+    // Force scroll to bottom when user sends a message
+    isUserScrolledUpRef.current = false;
+    setShowScrollButton(false);
 
     try {
       const chatHistory = [
@@ -264,12 +288,16 @@ export const TranscriptionResultView: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background text-text overflow-hidden">
+    <div className="h-screen flex flex-col bg-background text-text overflow-hidden relative">
       <div className="shrink-0 px-4 py-3 border-b border-mid-gray/20">
         <h1 className="text-lg font-semibold">Transcription</h1>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div 
+        ref={messagesContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+      >
         {messages.map((msg, i) =>
           msg.role === "bot" ? (
             <div key={msg.chatId ?? `bot-${i}`} className="flex flex-col items-start max-w-[85%]">
@@ -302,6 +330,23 @@ export const TranscriptionResultView: React.FC = () => {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {showScrollButton && (
+        <div className="absolute bottom-20 right-6 z-10">
+          <button
+            type="button"
+            onClick={() => {
+              isUserScrolledUpRef.current = false;
+              setShowScrollButton(false);
+              scrollToBottom();
+            }}
+            className="p-2 rounded-full bg-background border border-mid-gray/30 shadow-lg hover:bg-mid-gray/10 transition-colors"
+            title="Scroll to bottom"
+          >
+            <ArrowDown size={18} className="text-mid-gray" />
+          </button>
+        </div>
+      )}
 
       <div className="shrink-0 p-3 border-t border-mid-gray/20 flex gap-2">
         <input
