@@ -11,8 +11,12 @@ export function UpdateChecker() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Check for updates on mount
-    checkForUpdates();
+    // Check for updates on mount (with delay to not block UI)
+    const timer = setTimeout(() => {
+      checkForUpdates();
+    }, 2000); // 2 second delay
+
+    return () => clearTimeout(timer);
   }, []);
 
   const checkForUpdates = async () => {
@@ -21,7 +25,15 @@ export function UpdateChecker() {
     try {
       setIsChecking(true);
       setError(null);
-      const availableUpdate = await check();
+      
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise<null>((_, reject) => 
+        setTimeout(() => reject(new Error("Update check timeout")), 10000)
+      );
+      
+      const updatePromise = check();
+      
+      const availableUpdate = await Promise.race([updatePromise, timeoutPromise]);
 
       if (availableUpdate?.available) {
         setUpdate(availableUpdate);
@@ -31,7 +43,8 @@ export function UpdateChecker() {
       }
     } catch (err) {
       console.error("Failed to check for updates:", err);
-      setError("Failed to check for updates");
+      // Don't show error on first check - just silently fail
+      setError(null);
     } finally {
       setIsChecking(false);
     }
