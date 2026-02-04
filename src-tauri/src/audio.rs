@@ -592,7 +592,7 @@ where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
     // State for resampling if needed (when no shared state processing)
-    let input_rate = config.sample_rate().0 as f32;
+    let input_rate = config.sample_rate as f32;
     let target_rate = 48000.0;
     let mut resample_pos = 0.0;
     let mut last_sample = 0.0;
@@ -712,7 +712,7 @@ where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
     // State for resampling
-    let input_rate = config.sample_rate().0 as f32;
+    let input_rate = config.sample_rate as f32;
     let target_rate = 48000.0;
     let mut resample_pos = 0.0;
     let mut last_sample = 0.0;
@@ -774,7 +774,7 @@ where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
     // State for resampling
-    let input_rate = config.sample_rate().0 as f32;
+    let input_rate = config.sample_rate as f32;
     let target_rate = 48000.0;
     let mut resample_pos = 0.0;
     let mut last_sample = 0.0;
