@@ -30,8 +30,8 @@ use windows62::{
         Foundation::{CloseHandle, E_FAIL, HANDLE},
         Media::Audio::*,
         System::{
-            Com::{CoInitializeEx, COINIT_MULTITHREADED},
-            Com::StructuredStorage::PROPVARIANT,
+            Com::{CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, COINIT_MULTITHREADED},
+            Com::StructuredStorage::{PROPVARIANT, PropVariantClear},
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
                 TH32CS_SNAPPROCESS,
@@ -278,18 +278,12 @@ fn capture_process_loopback(
     let device_id = HSTRING::from("VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK");
 
     // Build activation params
-    let activation_params = AUDIOCLIENT_ACTIVATION_PARAMS {
-        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
-        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
-            ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
-                TargetProcessId: pid,
-                ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
-            },
-        },
-    };
+    // IMPORTANT: Zero-initialize first to avoid undefined behavior in padding
+    let mut activation_params: AUDIOCLIENT_ACTIVATION_PARAMS = unsafe { std::mem::zeroed() };
+    activation_params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
+    activation_params.Anonymous.ProcessLoopbackParams.TargetProcessId = pid;
+    activation_params.Anonymous.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
 
-    // Wrap activation params in PROPVARIANT(VT_BLOB) as required by WASAPI
-    // Keep activation_params alive for the entire async operation
     let activation_params_bytes = unsafe {
         std::slice::from_raw_parts(
             &activation_params as *const _ as *const u8,
@@ -297,21 +291,35 @@ fn capture_process_loopback(
         )
     };
 
-    let mut prop_variant = PROPVARIANT::default();
-    unsafe {
-        // Access inner struct via union field 'Anonymous' (ManuallyDrop)
-        // We must dereference ManuallyDrop to access the struct
-        let inner = &mut *prop_variant.Anonymous.Anonymous;
+    // PROPVARIANT setup with CoTaskMemAlloc + ManuallyDrop
+    // We MUST use CoTaskMemAlloc because PropVariantClear will try to free it
+    // We MUST use ManuallyDrop to prevent premature freeing before activation completes
+    let mut prop_variant = unsafe {
+        let mut pv: PROPVARIANT = std::mem::zeroed();
         
-        // VT_BLOB is already a VARENUM, so we can assign it directly
+        // Allocate COM memory
+        let p_data = CoTaskMemAlloc(activation_params_bytes.len());
+        if p_data.is_null() {
+            return Err("CoTaskMemAlloc failed".to_string());
+        }
+        
+        // Copy data to COM memory
+        std::ptr::copy_nonoverlapping(
+            activation_params_bytes.as_ptr(), 
+            p_data as *mut u8, 
+            activation_params_bytes.len()
+        );
+
+        // Access inner fields
+        let inner = &mut *pv.Anonymous.Anonymous;
         inner.vt = VT_BLOB;
         
-        // Access blob via inner struct's 'Anonymous' union field 'blob'
-        // BLOB is Copy, so it's not wrapped in ManuallyDrop - no dereference needed
         let blob = &mut inner.Anonymous.blob;
         blob.cbSize = activation_params_bytes.len() as u32;
-        blob.pBlobData = activation_params_bytes.as_ptr() as *mut u8;
-    }
+        blob.pBlobData = p_data as *mut u8;
+
+        std::mem::ManuallyDrop::new(pv)
+    };
 
     println!("Starting WASAPI activation for PID {}", pid);
     println!("  Format: 48kHz stereo float32");
@@ -321,17 +329,25 @@ fn capture_process_loopback(
         windows62::Win32::Media::Audio::ActivateAudioInterfaceAsync(
             &device_id,
             &IAudioClient::IID,
-            Some(&prop_variant as *const _ as *const _),
+            Some(&*prop_variant as *const _ as *const _),
             &handler,
         )
-        .map_err(|e| format!("ActivateAudioInterfaceAsync failed: {e}"))?;
+        .map_err(|e| {
+            // Cleanup on immediate failure
+            let _ = PropVariantClear(&mut *prop_variant);
+            format!("ActivateAudioInterfaceAsync failed: {e}")
+        })?;
     };
 
     println!("Waiting for activation to complete...");
 
     unsafe { WaitForSingleObject(done, INFINITE) };
-    unsafe {
-        CloseHandle(done).ok();
+    unsafe { CloseHandle(done).ok(); }
+
+    // Cleanup PROPVARIANT now that activation is done
+    // This will free the pBlobData allocated with CoTaskMemAlloc
+    unsafe { 
+        let _ = PropVariantClear(&mut *prop_variant); 
     }
 
     // Extract IAudioClient from handler result
