@@ -68,8 +68,19 @@ export function UpdateChecker() {
         }
       });
 
-      console.log("Update installed, relaunching...");
-      await relaunch();
+      console.log("Update installed successfully");
+      
+      // Give the system a moment to finalize the installation
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      console.log("Relaunching application...");
+      try {
+        await relaunch();
+      } catch (err) {
+        console.error("Relaunch failed:", err);
+        // Fallback: show message to user
+        alert("Update installed successfully. Please restart the application manually.");
+      }
     } catch (err) {
       console.error("Failed to install update:", err);
       setError("Failed to install update");
