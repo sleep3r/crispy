@@ -8,6 +8,35 @@ use screencapturekit::stream::sc_stream::SCStream;
 pub const SAMPLE_RATE: usize = 48000;
 pub const CHANNELS: usize = 2; // Stereo
 
+/// Resample audio from one sample rate to another using linear interpolation
+fn resample_audio(samples: &[f32], from_rate: usize, to_rate: usize) -> Vec<f32> {
+    if from_rate == to_rate {
+        return samples.to_vec();
+    }
+    
+    let ratio = from_rate as f64 / to_rate as f64;
+    let output_len = (samples.len() as f64 / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(output_len);
+    
+    for i in 0..output_len {
+        let src_pos = i as f64 * ratio;
+        let src_index = src_pos.floor() as usize;
+        let frac = src_pos - src_index as f64;
+        
+        if src_index + 1 < samples.len() {
+            // Linear interpolation between two samples
+            let sample1 = samples[src_index];
+            let sample2 = samples[src_index + 1];
+            output.push(sample1 + (sample2 - sample1) * frac as f32);
+        } else if src_index < samples.len() {
+            // Last sample, no interpolation needed
+            output.push(samples[src_index]);
+        }
+    }
+    
+    output
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct RecordableApp {
     pub id: String,
