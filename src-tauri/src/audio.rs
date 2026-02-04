@@ -591,6 +591,12 @@ fn build_input_stream_f32<F>(
 where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
+    // State for resampling if needed (when no shared state processing)
+    let input_rate = config.sample_rate().0 as f32;
+    let target_rate = 48000.0;
+    let mut resample_pos = 0.0;
+    let mut last_sample = 0.0;
+
     device
         .build_input_stream(
             config,
@@ -599,7 +605,83 @@ where
                 let mut frames = 0.0;
                 for frame in data.chunks(input_channels) {
                     let mono = frame.iter().sum::<f32>() / input_channels as f32;
-                    push_mono_to_buffers(shared.as_ref(), &rec_buffer, mono, &mut sum, &mut frames);
+                    
+                    if let Some(shared) = shared.as_ref() {
+                        // Shared state handles its own resampling/processing
+                        push_mono_to_buffers(Some(shared), &rec_buffer, mono, &mut sum, &mut frames);
+                    } else {
+                        // Manual resampling if needed
+                        if (input_rate - target_rate).abs() < 1.0 {
+                            // No resampling needed
+                            push_mono_to_buffers(None, &rec_buffer, mono, &mut sum, &mut frames);
+                        } else {
+                            // Linear interpolation resampling
+                            let step = input_rate / target_rate;
+                            // Push current sample to conceptual input buffer
+                            // Since we process 1 sample at a time, we just check if we cross the threshold
+                            
+                            // Algorithm:
+                            // We are moving through output samples.
+                            // resample_pos tracks position in INPUT samples.
+                            // If resample_pos < 1.0, we need to interpolate between last_sample and current mono.
+                            // But here we are driven by INPUT samples coming in.
+                            
+                            // Let's reverse it: simple linear interpolation driven by input is harder 1-by-1.
+                            // Easier: treat 'last_sample' and 'mono' as the two points.
+                            // We generate N output samples between them.
+                            
+                            // Actually, let's keep it simple:
+                            // We have 'mono' (current) and 'last_sample' (previous).
+                            // We advanced by 1.0 input samples.
+                            // We need to output samples while our "output clock" catches up.
+                            
+                            // resample_pos: accumulated input samples not yet output
+                            resample_pos += 1.0;
+                            
+                            while resample_pos >= step {
+                                resample_pos -= step;
+                                // Interpolate
+                                // At this point we are 'resample_pos' fraction past 'last_sample' towards 'mono'? 
+                                // No, wait. Standard algorithm:
+                                // pos += input_step; while pos >= 1.0 { output(); pos -= 1.0; }
+                                // Here we want output rate (48k)
+                                
+                                // Let's use the simplest logic:
+                                // Just duplicate/drop samples? No, bad quality.
+                                // Linear:
+                                // We are between last_sample and mono.
+                                // Where exactly?
+                                
+                                // Let's use a simpler approach: 
+                                // Just feed it to a helper if I can... no helper available easily.
+                                
+                                // Quick & Dirty Linear Resampler for Stream:
+                                // We need to produce output samples at 48kHz.
+                                // Input comes at 'input_rate'.
+                                // Ratio = input / output.
+                                // next_output_time += Ratio.
+                                // If next_output_time < 1.0, we produce a sample.
+                                
+                                // Re-using state:
+                                // resample_pos: time of the next OUTPUT sample relative to current INPUT sample.
+                                // valid range: [0.0, 1.0)
+                                // If resample_pos < 1.0, we output a sample interpolated at that position.
+                                // Then we increment resample_pos by (input / output).
+                                // If resample_pos >= 1.0, we wait for next input sample (which becomes 'last_sample').
+                                // When new input arrives, we decrement resample_pos by 1.0 (since we moved 1.0 input forward).
+                                
+                                let ratio = input_rate / target_rate;
+                                while resample_pos < 1.0 {
+                                    let t = resample_pos;
+                                    let interpolated = last_sample + (mono - last_sample) * t;
+                                    push_mono_to_buffers(None, &rec_buffer, interpolated, &mut sum, &mut frames);
+                                    resample_pos += ratio;
+                                }
+                                resample_pos -= 1.0;
+                            }
+                            last_sample = mono;
+                        }
+                    }
                 }
                 if frames > 0.0 {
                     let rms = (sum / frames).sqrt();
@@ -629,6 +711,12 @@ fn build_input_stream_i16<F>(
 where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
+    // State for resampling
+    let input_rate = config.sample_rate().0 as f32;
+    let target_rate = 48000.0;
+    let mut resample_pos = 0.0;
+    let mut last_sample = 0.0;
+
     device
         .build_input_stream(
             config,
@@ -638,7 +726,24 @@ where
                 for frame in data.chunks(input_channels) {
                     let mono = frame.iter().map(|&s| s as f32 / 32768.0).sum::<f32>()
                         / input_channels as f32;
-                    push_mono_to_buffers(shared.as_ref(), &rec_buffer, mono, &mut sum, &mut frames);
+                    
+                    if let Some(shared) = shared.as_ref() {
+                        push_mono_to_buffers(Some(shared), &rec_buffer, mono, &mut sum, &mut frames);
+                    } else {
+                        if (input_rate - target_rate).abs() < 1.0 {
+                            push_mono_to_buffers(None, &rec_buffer, mono, &mut sum, &mut frames);
+                        } else {
+                            let ratio = input_rate / target_rate;
+                            while resample_pos < 1.0 {
+                                let t = resample_pos;
+                                let interpolated = last_sample + (mono - last_sample) * t;
+                                push_mono_to_buffers(None, &rec_buffer, interpolated, &mut sum, &mut frames);
+                                resample_pos += ratio;
+                            }
+                            resample_pos -= 1.0;
+                            last_sample = mono;
+                        }
+                    }
                 }
                 if frames > 0.0 {
                     let rms = (sum / frames).sqrt();
@@ -668,6 +773,12 @@ fn build_input_stream_u16<F>(
 where
     F: FnMut(cpal::StreamError) + Send + 'static,
 {
+    // State for resampling
+    let input_rate = config.sample_rate().0 as f32;
+    let target_rate = 48000.0;
+    let mut resample_pos = 0.0;
+    let mut last_sample = 0.0;
+
     device
         .build_input_stream(
             config,
@@ -680,7 +791,24 @@ where
                         .map(|&s| (s as f32 - 32768.0) / 32768.0)
                         .sum::<f32>()
                         / input_channels as f32;
-                    push_mono_to_buffers(shared.as_ref(), &rec_buffer, mono, &mut sum, &mut frames);
+                    
+                    if let Some(shared) = shared.as_ref() {
+                        push_mono_to_buffers(Some(shared), &rec_buffer, mono, &mut sum, &mut frames);
+                    } else {
+                        if (input_rate - target_rate).abs() < 1.0 {
+                            push_mono_to_buffers(None, &rec_buffer, mono, &mut sum, &mut frames);
+                        } else {
+                            let ratio = input_rate / target_rate;
+                            while resample_pos < 1.0 {
+                                let t = resample_pos;
+                                let interpolated = last_sample + (mono - last_sample) * t;
+                                push_mono_to_buffers(None, &rec_buffer, interpolated, &mut sum, &mut frames);
+                                resample_pos += ratio;
+                            }
+                            resample_pos -= 1.0;
+                            last_sample = mono;
+                        }
+                    }
                 }
                 if frames > 0.0 {
                     let rms = (sum / frames).sqrt();

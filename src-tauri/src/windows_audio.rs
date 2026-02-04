@@ -420,6 +420,7 @@ fn capture_process_loopback(
     let mut temp_mono: Vec<f32> = Vec::with_capacity(4096);
     let mut total_frames_captured = 0u64;
     let mut packet_count = 0u64;
+    let mut silent_packet_count = 0u64; // New metric
     let mut last_log_time = std::time::Instant::now();
 
     while !stop.load(Ordering::SeqCst) {
@@ -427,6 +428,7 @@ fn capture_process_loopback(
         unsafe { WaitForSingleObject(ready_event, 50) };
 
         loop {
+            // ... (GetNextPacketSize) ...
             let packet_frames = match unsafe { capture_client.GetNextPacketSize() } {
                 Ok(size) => size,
                 Err(e) => {
@@ -443,6 +445,7 @@ fn capture_process_loopback(
             total_frames_captured += packet_frames as u64;
 
             let (data_ptr, num_frames, flags) = unsafe {
+                // ... (GetBuffer) ...
                 let mut data_ptr: *mut u8 = std::ptr::null_mut();
                 let mut num_frames: u32 = 0;
                 let mut flags: u32 = 0;
@@ -452,12 +455,17 @@ fn capture_process_loopback(
                 (data_ptr, num_frames, flags)
             };
 
-            temp_mono.clear();
-
+            // Check silence
             let is_silent = (flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)) != 0;
+            if is_silent {
+                silent_packet_count += 1;
+            }
+
+            temp_mono.clear();
             if is_silent || data_ptr.is_null() || num_frames == 0 {
                 temp_mono.resize(num_frames as usize, 0.0);
             } else {
+                // ... (Downmix) ...
                 // We explicitly requested float32, so this is safe
                 let samples = unsafe {
                     std::slice::from_raw_parts(
@@ -473,7 +481,6 @@ fn capture_process_loopback(
                     } else if in_channels == 1 {
                         frame[0]
                     } else {
-                        // Fallback for unexpected channel counts
                         frame.iter().sum::<f32>() / in_channels as f32
                     };
                     temp_mono.push(mono_sample);
@@ -486,10 +493,8 @@ fn capture_process_loopback(
                     .map_err(|e| format!("ReleaseBuffer failed: {e}"))?;
             }
 
-            // No resampling needed - we're already at 48kHz
+            // ... (Push to buffer) ...
             let out = &temp_mono[..];
-
-            // Push to shared ring buffer
             {
                 let mut buf = app_buffer.lock().unwrap();
                 let max_len = 48_000 * 10;
@@ -505,13 +510,15 @@ fn capture_process_loopback(
         // Log stats every 5 seconds
         if last_log_time.elapsed().as_secs() >= 5 {
             println!(
-                "WASAPI capture stats: {} packets, {} frames (~{:.1}s of audio)",
+                "WASAPI capture stats: {} packets ({} silent), {} frames (~{:.1}s)",
                 packet_count,
+                silent_packet_count,
                 total_frames_captured,
                 total_frames_captured as f64 / 48000.0
             );
             last_log_time = std::time::Instant::now();
             packet_count = 0;
+            silent_packet_count = 0;
             total_frames_captured = 0;
         }
     }
