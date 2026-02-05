@@ -30,8 +30,12 @@ pub struct AppSettings {
     pub selected_model: String,
     pub selected_transcription_model: String,
     pub selected_recording_app: String,
-    #[serde(default)]
-    pub autostart_enabled: bool,
+    #[serde(default = "default_false_string")]
+    pub autostart_enabled: String,
+}
+
+fn default_false_string() -> String {
+    "false".to_string()
 }
 
 impl Default for AppSettings {
@@ -43,7 +47,7 @@ impl Default for AppSettings {
             selected_model: "dummy".to_string(),
             selected_transcription_model: "none".to_string(),
             selected_recording_app: "none".to_string(),
-            autostart_enabled: false,
+            autostart_enabled: "false".to_string(),
         }
     }
 }
@@ -170,7 +174,7 @@ pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<(
         "selected_model" => settings.selected_model = value,
         "selected_transcription_model" => settings.selected_transcription_model = value,
         "selected_recording_app" => settings.selected_recording_app = value,
-        "autostart_enabled" => settings.autostart_enabled = value.parse().unwrap_or(false),
+        "autostart_enabled" => settings.autostart_enabled = value,
         _ => return Err(anyhow::anyhow!("Unknown setting key: {}", key)),
     }
     save_app_settings(app, &settings)

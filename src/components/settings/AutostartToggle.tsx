@@ -15,7 +15,7 @@ export const AutostartToggle: React.FC<AutostartToggleProps> = ({
   const [localEnabled, setLocalEnabled] = useState<boolean | null>(null);
   
   // Use local state if set (during/after update), otherwise use settings value
-  const autostartEnabled = localEnabled ?? settings.autostart_enabled ?? false;
+  const autostartEnabled = localEnabled ?? (settings.autostart_enabled === "true");
 
   const handleToggle = async () => {
     if (isUpdating) return;

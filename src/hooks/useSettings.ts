@@ -22,7 +22,7 @@ interface SettingsState {
   selected_model: string;
   selected_transcription_model: string;
   selected_recording_app: string;
-  autostart_enabled?: boolean;
+  autostart_enabled: string;
 }
 
 const defaultSettings: SettingsState = {
@@ -32,7 +32,7 @@ const defaultSettings: SettingsState = {
   selected_model: "dummy",
   selected_transcription_model: "none",
   selected_recording_app: "none",
-  autostart_enabled: false,
+  autostart_enabled: "false",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };

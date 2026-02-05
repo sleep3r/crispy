@@ -89,7 +89,7 @@ fn main() {
                 
                 // Apply autostart setting
                 let autostart_manager = app.handle().autolaunch();
-                if app_settings.autostart_enabled {
+                if app_settings.autostart_enabled == "true" {
                     let _ = autostart_manager.enable();
                 } else {
                     let _ = autostart_manager.disable();
