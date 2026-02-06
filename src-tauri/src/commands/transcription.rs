@@ -118,7 +118,7 @@ fn run_transcription(
         sel.clone()
     };
     if model_id.is_empty() || model_id == "none" {
-        return Err("No transcription model selected. Choose a model in Settings.".into());
+        return Err("No transcription model selected. Choose a model in the bottom left corner.".into());
     }
 
     let _ = app.emit(
