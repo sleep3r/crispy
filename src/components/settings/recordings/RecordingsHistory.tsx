@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Trash2, FileText, Loader2, ExternalLink } from "lucide-react";
@@ -365,7 +365,8 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   }, [recording.path]);
 
   useEffect(() => {
-    setAudioUrl(convertFileSrc(recording.path));
+    const encoded = encodeURIComponent(recording.path);
+    setAudioUrl(`stream://localhost/${encoded}`);
   }, [recording.path]);
 
   const startTranscription = async () => {

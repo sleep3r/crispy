@@ -42,12 +42,108 @@ fn get_platform() -> Result<String, String> {
     return Ok("unknown".to_string());
 }
 
+/// Parse HTTP Range header like "bytes=0-1023" into (start, end) inclusive.
+fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
+    let header = header.trim();
+    if !header.starts_with("bytes=") {
+        return None;
+    }
+    let range_spec = &header[6..];
+    let mut parts = range_spec.splitn(2, '-');
+    let start_str = parts.next()?.trim();
+    let end_str = parts.next()?.trim();
+
+    if start_str.is_empty() {
+        // Suffix range: bytes=-500
+        let suffix: u64 = end_str.parse().ok()?;
+        let start = file_size.saturating_sub(suffix);
+        Some((start, file_size - 1))
+    } else {
+        let start: u64 = start_str.parse().ok()?;
+        let end = if end_str.is_empty() {
+            file_size - 1
+        } else {
+            end_str.parse().ok()?
+        };
+        Some((start, end.min(file_size - 1)))
+    }
+}
+
 fn main() {
     // Reduce noisy native logs (if supported by dependencies).
     std::env::set_var("CPUINFO_LOG_LEVEL", "fatal");
     std::env::set_var("GGML_LOG_LEVEL", "error");
 
     tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("stream", |_ctx, request, responder| {
+            std::thread::spawn(move || {
+                let uri = request.uri().to_string();
+                // Expected: stream://localhost/<encoded-path>
+                let path = uri
+                    .strip_prefix("stream://localhost/")
+                    .unwrap_or("");
+                let path = urlencoding::decode(path).unwrap_or_default().to_string();
+
+                let file = match std::fs::File::open(&path) {
+                    Ok(f) => f,
+                    Err(_) => {
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(404)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+                };
+                let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+                // Parse Range header
+                let range_header = request
+                    .headers()
+                    .get("range")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+
+                if let Some(range) = parse_range(range_header, file_size) {
+                    use std::io::{Read, Seek, SeekFrom};
+                    let mut f = file;
+                    let length = range.1 - range.0 + 1;
+                    let _ = f.seek(SeekFrom::Start(range.0));
+                    let mut buf = vec![0u8; length as usize];
+                    let _ = f.read_exact(&mut buf);
+
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(206)
+                            .header("Content-Type", "audio/wav")
+                            .header("Content-Length", length.to_string())
+                            .header(
+                                "Content-Range",
+                                format!("bytes {}-{}/{}", range.0, range.1, file_size),
+                            )
+                            .header("Accept-Ranges", "bytes")
+                            .body(buf)
+                            .unwrap(),
+                    );
+                } else {
+                    use std::io::Read;
+                    let mut f = file;
+                    let mut buf = Vec::with_capacity(file_size as usize);
+                    let _ = f.read_to_end(&mut buf);
+
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(200)
+                            .header("Content-Type", "audio/wav")
+                            .header("Content-Length", file_size.to_string())
+                            .header("Accept-Ranges", "bytes")
+                            .body(buf)
+                            .unwrap(),
+                    );
+                }
+            });
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
