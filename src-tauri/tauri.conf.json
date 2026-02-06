@@ -43,7 +43,8 @@
       "resources/**/*"
     ],
     "macOS": {
-      "entitlements": "Entitlements.plist"
+      "entitlements": "Entitlements.plist",
+      "hardenedRuntime": true
     },
     "icon": [
       "icons/32x32.png",
