@@ -105,7 +105,7 @@ version-bump: ## Bump version (TYPE=major|minor|patch, default patch)
 	echo "$(YELLOW)$$CURRENT$(NC) → $(GREEN)$$NEW_VERSION$(NC)"; \
 	sed -i.bak -E "s/\"version\": \"[^\"]+\"/\"version\": \"$$NEW_VERSION\"/" package.json && rm package.json.bak; \
 	sed -i.bak -E "s/^version = \"[^\"]+\"/version = \"$$NEW_VERSION\"/" src-tauri/Cargo.toml && rm src-tauri/Cargo.toml.bak; \
-	sed -i.bak -E "s/\"version\": \"[^\"]+\"/\"version\": \"$$NEW_VERSION\"/" src-tauri/tauri.conf.json && rm src-tauri/tauri.conf.json.bak; \
+	node -e "const fs=require('fs');const path='src-tauri/tauri.conf.json';const data=JSON.parse(fs.readFileSync(path,'utf8'));data.version='$$NEW_VERSION';fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\n');"; \
 	echo "$(GREEN)✅ Version updated in all files:$(NC)"; \
 	echo "   • package.json"; \
 	echo "   • src-tauri/Cargo.toml"; \
