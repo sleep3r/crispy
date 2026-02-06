@@ -3,6 +3,7 @@ import { SettingsGroup } from "../ui/SettingsGroup";
 import { RecordingsDirectory } from "./RecordingsDirectory";
 import { LlmSettings } from "./LlmSettings";
 import { AutostartToggle } from "./AutostartToggle";
+import { DiarizationToggle } from "./DiarizationToggle";
 
 export const SettingsPage: React.FC = () => {
   return (
@@ -19,6 +20,13 @@ export const SettingsPage: React.FC = () => {
         description="App startup and behavior preferences."
       >
         <AutostartToggle grouped />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Transcription"
+        description="Speaker diarization and transcription options."
+      >
+        <DiarizationToggle grouped />
       </SettingsGroup>
 
       <SettingsGroup

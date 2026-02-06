@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { useSettings } from "./useSettings";
+import { useTauriListen } from "./useTauriListen";
 
 export interface TranscriptionModelInfo {
   id: string;
@@ -99,7 +99,11 @@ export function useTranscriptionModels() {
     setError(null);
     try {
       const list = await invoke<TranscriptionModelInfo[]>("get_available_models");
-      setModels([NONE_OPTION, ...sortModels(list)]);
+      // Filter out diarization-only models from the transcription model list
+      const transcriptionModels = list.filter(
+        (m) => !m.id.startsWith("diarize-")
+      );
+      setModels([NONE_OPTION, ...sortModels(transcriptionModels)]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setModels([NONE_OPTION]);
@@ -267,47 +271,13 @@ export function useTranscriptionModels() {
     []
   );
 
-  useEffect(() => {
-    const unlistenState = listen<ModelStateEvent>(
-      "model-state-changed",
-      handleModelState
-    );
-    const unlistenProgress = listen<DownloadProgressPayload>(
-      "model-download-progress",
-      handleDownloadProgress
-    );
-    const unlistenComplete = listen<string>(
-      "model-download-complete",
-      handleDownloadComplete
-    );
-    const unlistenExtractStart = listen<string>(
-      "model-extraction-started",
-      handleExtractStart
-    );
-    const unlistenExtractComplete = listen<string>(
-      "model-extraction-completed",
-      handleExtractComplete
-    );
-    const unlistenExtractFailed = listen<{ model_id: string; error: string }>(
-      "model-extraction-failed",
-      handleExtractFailed
-    );
-    return () => {
-      unlistenState.then((fn) => fn());
-      unlistenProgress.then((fn) => fn());
-      unlistenComplete.then((fn) => fn());
-      unlistenExtractStart.then((fn) => fn());
-      unlistenExtractComplete.then((fn) => fn());
-      unlistenExtractFailed.then((fn) => fn());
-    };
-  }, [
-    handleDownloadComplete,
-    handleDownloadProgress,
-    handleExtractComplete,
-    handleExtractFailed,
-    handleExtractStart,
-    handleModelState,
-  ]);
+  // Setup Tauri listeners with proper lifecycle management
+  useTauriListen<ModelStateEvent>("model-state-changed", handleModelState);
+  useTauriListen<DownloadProgressPayload>("model-download-progress", handleDownloadProgress);
+  useTauriListen<string>("model-download-complete", handleDownloadComplete);
+  useTauriListen<string>("model-extraction-started", handleExtractStart);
+  useTauriListen<string>("model-extraction-completed", handleExtractComplete);
+  useTauriListen<{ model_id: string; error: string }>("model-extraction-failed", handleExtractFailed);
 
   const selected = getSetting("selected_transcription_model") || "none";
   const current =

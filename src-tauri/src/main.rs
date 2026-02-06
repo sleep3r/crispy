@@ -96,7 +96,10 @@ fn main() {
 
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("stream", |_ctx, request, responder| {
-            std::thread::spawn(move || {
+            // Use Tauri's async runtime instead of unbounded thread spawning
+            tauri::async_runtime::spawn(async move {
+                use std::io::{Read, Seek, SeekFrom};
+
                 let uri = request.uri().to_string();
                 // Expected: stream://localhost/<encoded-path>
                 let path = uri
@@ -106,7 +109,8 @@ fn main() {
 
                 let file = match std::fs::File::open(&path) {
                     Ok(f) => f,
-                    Err(_) => {
+                    Err(e) => {
+                        eprintln!("[stream://] Failed to open file {}: {}", path, e);
                         responder.respond(
                             tauri::http::Response::builder()
                                 .status(404)
@@ -116,7 +120,34 @@ fn main() {
                         return;
                     }
                 };
-                let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+                let file_size = match file.metadata() {
+                    Ok(m) => m.len(),
+                    Err(e) => {
+                        eprintln!("[stream://] Failed to get file metadata: {}", e);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(500)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+                };
+
+                // Empty files should return 200 with empty body
+                if file_size == 0 {
+                    responder.respond(
+                        tauri::http::Response::builder()
+                            .status(200)
+                            .header("Content-Type", "audio/wav")
+                            .header("Content-Length", "0")
+                            .header("Accept-Ranges", "bytes")
+                            .body(Vec::new())
+                            .unwrap(),
+                    );
+                    return;
+                }
 
                 // Parse Range header
                 let range_header = request
@@ -126,12 +157,34 @@ fn main() {
                     .unwrap_or("");
 
                 if let Some(range) = parse_range(range_header, file_size) {
-                    use std::io::{Read, Seek, SeekFrom};
+                    // Range request - read only the requested bytes
                     let mut f = file;
                     let length = range.1 - range.0 + 1;
-                    let _ = f.seek(SeekFrom::Start(range.0));
+
+                    // Seek to start position
+                    if let Err(e) = f.seek(SeekFrom::Start(range.0)) {
+                        eprintln!("[stream://] Seek failed: {}", e);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(500)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                        return;
+                    }
+
+                    // Read exactly the requested range
                     let mut buf = vec![0u8; length as usize];
-                    let _ = f.read_exact(&mut buf);
+                    if let Err(e) = f.read_exact(&mut buf) {
+                        eprintln!("[stream://] Read failed: {}", e);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(500)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                        return;
+                    }
 
                     responder.respond(
                         tauri::http::Response::builder()
@@ -147,10 +200,21 @@ fn main() {
                             .unwrap(),
                     );
                 } else {
-                    use std::io::Read;
+                    // No range - stream the entire file
+                    // Note: Still reading into memory for simplicity with Tauri's Response API
+                    // For truly large files, consider implementing chunked streaming
                     let mut f = file;
                     let mut buf = Vec::with_capacity(file_size as usize);
-                    let _ = f.read_to_end(&mut buf);
+                    if let Err(e) = f.read_to_end(&mut buf) {
+                        eprintln!("[stream://] Full read failed: {}", e);
+                        responder.respond(
+                            tauri::http::Response::builder()
+                                .status(500)
+                                .body(Vec::new())
+                                .unwrap(),
+                        );
+                        return;
+                    }
 
                     responder.respond(
                         tauri::http::Response::builder()

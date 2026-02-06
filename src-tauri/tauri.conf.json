@@ -15,9 +15,9 @@
         "label": "main",
         "title": "Crispy",
         "width": 720,
-        "height": 680,
+        "height": 820,
         "minWidth": 680,
-        "minHeight": 620,
+        "minHeight": 700,
         "resizable": true
       }
     ],

@@ -113,6 +113,7 @@ fn run_transcription(
     tm: &TranscriptionManager,
     selected_model: &Arc<std::sync::Mutex<String>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    eprintln!("[transcription] run_transcription called for: {}", recording_path);
     let model_id = {
         let sel = selected_model.lock().map_err(|e| e.to_string())?;
         sel.clone()
@@ -120,6 +121,12 @@ fn run_transcription(
     if model_id.is_empty() || model_id == "none" {
         return Err("No transcription model selected. Choose a model in the bottom left corner.".into());
     }
+
+    // Check if diarization is enabled
+    let diarization_enabled = crate::llm_settings::load_app_settings(app)
+        .map(|s| s.diarization_enabled == "true")
+        .unwrap_or(false);
+    eprintln!("[transcription] diarization_enabled = {}", diarization_enabled);
 
     let _ = app.emit(
         "transcription-phase",
@@ -200,8 +207,16 @@ fn run_transcription(
     let mut pending_16k: Vec<f32> = Vec::with_capacity(transcribe_chunk_samples);
     let mut processed_out_samples = 0usize;
     let start = Instant::now();
-    let mut parts: Vec<String> = Vec::new();
+    // Store (start_time_seconds, text) for each chunk -- needed for diarization alignment
+    let mut parts: Vec<(f64, String)> = Vec::new();
     let mut transcription_started = false;
+
+    // Collect all resampled audio for diarization (only if enabled)
+    let mut all_audio_16k: Vec<f32> = if diarization_enabled {
+        Vec::with_capacity(total_out_samples)
+    } else {
+        Vec::new()
+    };
 
     let emit_progress = |app: &AppHandle,
                          tm: &TranscriptionManager,
@@ -230,6 +245,10 @@ fn run_transcription(
     let mut process_pending = |pending_16k: &mut Vec<f32>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         while pending_16k.len() >= transcribe_chunk_samples {
             let chunk: Vec<f32> = pending_16k.drain(..transcribe_chunk_samples).collect();
+            if diarization_enabled {
+                all_audio_16k.extend_from_slice(&chunk);
+            }
+            let chunk_start_seconds = processed_out_samples as f64 / TARGET_SAMPLE_RATE as f64;
             if !transcription_started {
                 transcription_started = true;
                 let _ = app.emit(
@@ -242,7 +261,7 @@ fn run_transcription(
             }
             let chunk_text = tm.transcribe(chunk)?;
             if !chunk_text.trim().is_empty() {
-                parts.push(chunk_text);
+                parts.push((chunk_start_seconds, chunk_text));
             }
             processed_out_samples = processed_out_samples.saturating_add(transcribe_chunk_samples);
             let progress = if total_out_samples > 0 {
@@ -330,9 +349,13 @@ fn run_transcription(
             );
         }
         let chunk: Vec<f32> = pending_16k.drain(..).collect();
+        if diarization_enabled {
+            all_audio_16k.extend_from_slice(&chunk);
+        }
+        let chunk_start_seconds = processed_out_samples as f64 / TARGET_SAMPLE_RATE as f64;
         let chunk_text = tm.transcribe(chunk.clone())?;
         if !chunk_text.trim().is_empty() {
-            parts.push(chunk_text);
+            parts.push((chunk_start_seconds, chunk_text));
         }
         processed_out_samples = processed_out_samples.saturating_add(chunk.len());
         let progress = if total_out_samples > 0 {
@@ -343,7 +366,68 @@ fn run_transcription(
         emit_progress(app, tm, recording_path, progress, Some(0));
     }
 
-    let text = parts.join("\n");
+    // Run diarization if enabled
+    let text = if diarization_enabled && !all_audio_16k.is_empty() {
+        let _ = app.emit(
+            "transcription-phase",
+            TranscriptionPhaseEvent {
+                recording_path: recording_path.to_string(),
+                phase: "diarizing".to_string(),
+            },
+        );
+        tm.set_state(
+            recording_path,
+            TranscriptionState {
+                status: "started".to_string(),
+                progress: 0.95,
+                eta_seconds: None,
+                phase: Some("diarizing".to_string()),
+            },
+        );
+
+        // Get diarization model paths
+        let model_manager: &Arc<crate::managers::model::ModelManager> = &*app.state();
+        let seg_path = model_manager.get_model_path("diarize-segmentation");
+        let emb_path = model_manager.get_model_path("diarize-embedding");
+
+        eprintln!("[transcription] diarization model paths: seg={:?}, emb={:?}", seg_path, emb_path);
+        match (seg_path, emb_path) {
+            (Ok(seg), Ok(emb)) => {
+                // Try reading audio directly via pyannote's own reader for comparison
+                // Convert resampled f32 audio to i16 for diarization
+                // IMPORTANT: Use all_audio_16k (16kHz mono) NOT raw WAV samples
+                eprintln!("[transcription] converting {} samples @ 16kHz to i16", all_audio_16k.len());
+                let samples_i16 = crate::managers::diarization::f32_to_i16(&all_audio_16k);
+                let sr = TARGET_SAMPLE_RATE as u32; // 16000 Hz
+
+                match crate::managers::diarization::run_diarization(
+                    &samples_i16,
+                    sr,
+                    &seg,
+                    &emb,
+                    6, // max speakers
+                ) {
+                    Ok(speaker_segments) => {
+                        eprintln!("[transcription] diarization OK: {} speaker segments found", speaker_segments.len());
+                        let formatted = crate::managers::diarization::format_diarized_text(&parts, &speaker_segments);
+                        eprintln!("[transcription] diarized text length: {} chars", formatted.len());
+                        formatted
+                    }
+                    Err(e) => {
+                        eprintln!("[transcription] diarization FAILED: {}", e);
+                        parts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n")
+                    }
+                }
+            }
+            _ => {
+                eprintln!("[transcription] diarization models not downloaded, falling back to plain text");
+                parts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n")
+            }
+        }
+    } else {
+        parts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n")
+    };
+
     save_transcription_result(app, recording_path, &text)?;
     save_transcription_metadata(app, recording_path, &model_id)?;
     Ok(())
@@ -389,8 +473,9 @@ pub async fn open_transcription_window(app: AppHandle, recording_path: String) -
     let encoded = urlencoding::encode(&recording_path);
     let url = WebviewUrl::App(format!("index.html?recording_path={}", encoded).into());
     WebviewWindowBuilder::new(&app, "transcription-result", url)
-        .title("Transcription Result")
-        .inner_size(500.0, 400.0)
+        .title("Transcription")
+        .inner_size(620.0, 700.0)
+        .min_inner_size(400.0, 300.0)
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())

@@ -200,6 +200,45 @@ impl ModelManager {
             },
         );
 
+        // Diarization models (pyannote-rs)
+        available_models.insert(
+            "diarize-segmentation".to_string(),
+            ModelInfo {
+                id: "diarize-segmentation".to_string(),
+                name: "Diarization: Segmentation".to_string(),
+                description: "Pyannote segmentation model for detecting speech segments.".to_string(),
+                filename: "segmentation-3.0.onnx".to_string(),
+                url: Some("https://s3.crispy.fyi/models/segmentation-3.0.onnx".to_string()),
+                size_mb: 6,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::Whisper, // placeholder, not used for inference
+                accuracy_score: 0.0,
+                speed_score: 0.0,
+            },
+        );
+
+        available_models.insert(
+            "diarize-embedding".to_string(),
+            ModelInfo {
+                id: "diarize-embedding".to_string(),
+                name: "Diarization: Speaker Embedding".to_string(),
+                description: "WeSpeaker embedding model for speaker identification.".to_string(),
+                filename: "wespeaker_en_voxceleb_CAM++.onnx".to_string(),
+                url: Some("https://s3.crispy.fyi/models/wespeaker_en_voxceleb_CAM++.onnx".to_string()),
+                size_mb: 28,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::Whisper, // placeholder, not used for inference
+                accuracy_score: 0.0,
+                speed_score: 0.0,
+            },
+        );
+
         let manager = Self {
             app_handle: app_handle.clone(),
             models_dir,

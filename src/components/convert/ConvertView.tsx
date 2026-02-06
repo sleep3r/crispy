@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { FileVideo, Upload, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { useTauriListen } from "../../hooks/useTauriListen";
 
 interface ConversionJob {
   id: string;
@@ -94,67 +94,54 @@ export const ConvertView: React.FC = () => {
     }
   };
 
+  // Check FFmpeg availability on mount
   useEffect(() => {
     checkFFmpeg();
+  }, []);
 
-    // Listen for file drop events
-    let unlistenDrop: UnlistenFn | undefined;
-    let unlistenDrag: UnlistenFn | undefined;
-    let unlistenCancelled: UnlistenFn | undefined;
+  // Setup drag/drop listeners with proper lifecycle
+  useTauriListen<{ paths: string[] } | string[]>("tauri://drag-drop", async (event) => {
+    // Handle payload: can be { paths: string[] } (Tauri v2) or just string[]
+    const payload = event.payload;
+    let droppedPaths: string[] = [];
 
-    const setupFileDrop = async () => {
-      unlistenDrop = await listen<{ paths: string[] } | string[]>("tauri://drag-drop", async (event) => {
-        // Handle payload: can be { paths: string[] } (Tauri v2) or just string[]
-        const payload = event.payload;
-        let droppedPaths: string[] = [];
+    if (Array.isArray(payload)) {
+      droppedPaths = payload;
+    } else if (payload && typeof payload === 'object' && 'paths' in payload && Array.isArray(payload.paths)) {
+      droppedPaths = payload.paths;
+    }
 
-        if (Array.isArray(payload)) {
-          droppedPaths = payload;
-        } else if (payload && typeof payload === 'object' && 'paths' in payload && Array.isArray(payload.paths)) {
-          droppedPaths = payload.paths;
+    const now = Date.now();
+    const uniquePaths = Array.from(new Set(droppedPaths));
+    const acceptedPaths = uniquePaths.filter((path) => {
+      const last = recentDropsRef.current.get(path);
+      if (last && now - last < 2000) return false;
+      recentDropsRef.current.set(path, now);
+      return true;
+    });
+
+    if (recentDropsRef.current.size > 50) {
+      for (const [path, ts] of recentDropsRef.current) {
+        if (now - ts > 10000) {
+          recentDropsRef.current.delete(path);
         }
+      }
+    }
 
-        const now = Date.now();
-        const uniquePaths = Array.from(new Set(droppedPaths));
-        const acceptedPaths = uniquePaths.filter((path) => {
-          const last = recentDropsRef.current.get(path);
-          if (last && now - last < 2000) return false;
-          recentDropsRef.current.set(path, now);
-          return true;
-        });
+    for (const path of acceptedPaths) {
+      await addConversionJob(path);
+    }
+    setIsDragging(false);
+  });
 
-        if (recentDropsRef.current.size > 50) {
-          for (const [path, ts] of recentDropsRef.current) {
-            if (now - ts > 10000) {
-              recentDropsRef.current.delete(path);
-            }
-          }
-        }
+  // Drag hover events
+  useTauriListen("tauri://drag", () => {
+    setIsDragging(true);
+  });
 
-        for (const path of acceptedPaths) {
-          await addConversionJob(path);
-        }
-        setIsDragging(false);
-      });
-
-      // Also listen for drag hover events
-      unlistenDrag = await listen("tauri://drag", () => {
-        setIsDragging(true);
-      });
-
-      unlistenCancelled = await listen("tauri://drag-cancelled", () => {
-        setIsDragging(false);
-      });
-    };
-
-    setupFileDrop();
-
-    return () => {
-      if (unlistenDrop) unlistenDrop();
-      if (unlistenDrag) unlistenDrag();
-      if (unlistenCancelled) unlistenCancelled();
-    };
-  }, [addConversionJob]);
+  useTauriListen("tauri://drag-cancelled", () => {
+    setIsDragging(false);
+  });
 
   const clearCompleted = () => {
     setJobs((prev) => prev.filter((j) => j.status !== "completed"));

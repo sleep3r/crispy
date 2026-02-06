@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { Copy, Check, Send, ArrowDown } from "lucide-react";
+import { useTauriListen } from "../hooks/useTauriListen";
 
 const getPathFromQuery = (): string | null => {
   const params = new URLSearchParams(globalThis.location.search);
@@ -12,9 +12,72 @@ type ChatMessage = {
   role: "user" | "bot";
   name?: string;
   content: string;
-  chatId?: string; // For tracking streaming responses
-  streaming?: boolean; // If bot message is still streaming
+  chatId?: string;
+  streaming?: boolean;
 };
+
+/** Speaker label colors - muted, accessible palette */
+const SPEAKER_COLORS = [
+  { bg: "bg-blue-500/10", text: "text-blue-400", border: "border-blue-500/30" },
+  { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/30" },
+  { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/30" },
+  { bg: "bg-purple-500/10", text: "text-purple-400", border: "border-purple-500/30" },
+  { bg: "bg-rose-500/10", text: "text-rose-400", border: "border-rose-500/30" },
+  { bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/30" },
+];
+
+function getSpeakerColor(speaker: string) {
+  // Extract number from "Speaker N" or use hash
+  const match = /\d+/.exec(speaker);
+  const idx = match ? (Number.parseInt(match[0], 10) - 1) : 0;
+  return SPEAKER_COLORS[idx % SPEAKER_COLORS.length];
+}
+
+/** Parse transcription text that may contain [Speaker N] markers */
+function parseTranscriptionContent(content: string): React.ReactNode {
+  const lines = content.split("\n");
+  const elements: React.ReactNode[] = [];
+  let currentSpeaker: string | null = null;
+  let currentBlock: string[] = [];
+
+  const flushBlock = () => {
+    if (currentBlock.length === 0) return;
+    const text = currentBlock.join("\n").trim();
+    if (!text) {
+      currentBlock = [];
+      return;
+    }
+    if (currentSpeaker) {
+      const color = getSpeakerColor(currentSpeaker);
+      elements.push(
+        <div key={`block-${elements.length}`} className={`border-l-2 ${color.border} pl-3 py-1.5 my-2`}>
+          <span className={`text-[11px] font-semibold uppercase tracking-wider ${color.text} ${color.bg} rounded px-1.5 py-0.5`}>
+            {currentSpeaker}
+          </span>
+          <p className="mt-1 leading-relaxed">{text}</p>
+        </div>
+      );
+    } else {
+      elements.push(
+        <p key={`block-${elements.length}`} className="leading-relaxed my-1">{text}</p>
+      );
+    }
+    currentBlock = [];
+  };
+
+  for (const line of lines) {
+    const speakerMatch = /^\[(.+?)\]\s*$/.exec(line);
+    if (speakerMatch) {
+      flushBlock();
+      currentSpeaker = speakerMatch[1];
+    } else {
+      currentBlock.push(line);
+    }
+  }
+  flushBlock();
+
+  return <>{elements}</>;
+}
 
 export const TranscriptionResultView: React.FC = () => {
   const [recordingPath, setRecordingPath] = useState<string | null>(null);
@@ -35,22 +98,17 @@ export const TranscriptionResultView: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Track if user has scrolled up
   const handleScroll = () => {
     const container = messagesContainerRef.current;
     if (!container) return;
-    
     const { scrollTop, scrollHeight, clientHeight } = container;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    
-    // Consider "at bottom" if within 50px of bottom
     const isScrolledUp = distanceFromBottom > 50;
     isUserScrolledUpRef.current = isScrolledUp;
     setShowScrollButton(isScrolledUp);
   };
 
   useEffect(() => {
-    // Only auto-scroll if user hasn't scrolled up
     if (!isUserScrolledUpRef.current) {
       scrollToBottom();
     }
@@ -103,69 +161,71 @@ export const TranscriptionResultView: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    const unlistenOpen = listen<{ recording_path: string }>("transcription-open", (event) => {
-      const p = event?.payload?.recording_path;
-      if (p) {
-        const url = new URL(globalThis.location.href);
-        url.searchParams.set("recording_path", p);
-        globalThis.history.replaceState(null, "", url.toString());
-        setError(null);
-        loadTranscription(p);
-      }
-    });
+  // Setup event listeners with proper lifecycle management
+  useTauriListen<{ recording_path: string }>("transcription-open", (event) => {
+    const p = event?.payload?.recording_path;
+    if (p) {
+      const url = new URL(globalThis.location.href);
+      url.searchParams.set("recording_path", p);
+      globalThis.history.replaceState(null, "", url.toString());
+      setError(null);
+      loadTranscription(p);
+    }
+  });
 
-    const unlistenStream = listen<{ chat_id: string; delta: string }>(
-      "transcription-chat-stream",
-      (event) => {
-        const { chat_id, delta } = event.payload;
-        setMessages((prev) => {
-          const lastIndex = prev.findIndex(
-            (m) => m.role === "bot" && m.chatId === chat_id && m.streaming
-          );
-          if (lastIndex === -1) return prev;
-          const updated = [...prev];
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content: updated[lastIndex].content + delta,
-          };
-          return updated;
-        });
-      }
-    );
-
-    const unlistenDone = listen<{ chat_id: string }>("transcription-chat-done", (event) => {
-      const { chat_id } = event.payload;
+  useTauriListen<{ chat_id: string; delta: string }>(
+    "transcription-chat-stream",
+    (event) => {
+      const { chat_id, delta } = event.payload;
       setMessages((prev) => {
-        const next = prev.map((m) =>
-          m.chatId === chat_id ? { ...m, streaming: false } : m
+        const lastIndex = prev.findIndex(
+          (m) => m.role === "bot" && m.chatId === chat_id && m.streaming
         );
-        persistChatHistory(next);
-        return next;
+        if (lastIndex === -1) return prev;
+        const updated = [...prev];
+        updated[lastIndex] = {
+          ...updated[lastIndex],
+          content: updated[lastIndex].content + delta,
+        };
+        return updated;
+      });
+    }
+  );
+
+  useTauriListen<{ chat_id: string }>("transcription-chat-done", (event) => {
+    const { chat_id } = event.payload;
+    setMessages((prev) => {
+      const next = prev.map((m) =>
+        m.chatId === chat_id ? { ...m, streaming: false } : m
+      );
+      persistChatHistory(next);
+      return next;
+    });
+    setSending(false);
+  });
+
+  useTauriListen<{ chat_id: string; delta: string }>(
+    "transcription-chat-error",
+    (event) => {
+      const { chat_id, delta } = event.payload;
+      setMessages((prev) => {
+        const lastIndex = prev.findIndex((m) => m.chatId === chat_id && m.streaming);
+        if (lastIndex === -1) return prev;
+        const updated = [...prev];
+        updated[lastIndex] = {
+          ...updated[lastIndex],
+          content: delta,
+          streaming: false,
+        };
+        persistChatHistory(updated);
+        return updated;
       });
       setSending(false);
-    });
+    }
+  );
 
-    const unlistenError = listen<{ chat_id: string; delta: string }>(
-      "transcription-chat-error",
-      (event) => {
-        const { chat_id, delta } = event.payload;
-        setMessages((prev) => {
-          const lastIndex = prev.findIndex((m) => m.chatId === chat_id && m.streaming);
-          if (lastIndex === -1) return prev;
-          const updated = [...prev];
-          updated[lastIndex] = {
-            ...updated[lastIndex],
-            content: delta,
-            streaming: false,
-          };
-          persistChatHistory(updated);
-          return updated;
-        });
-        setSending(false);
-      }
-    );
-
+  // Initial load from query params
+  useEffect(() => {
     (async () => {
       const fromQuery = getPathFromQuery();
       if (fromQuery) await loadTranscription(fromQuery);
@@ -174,13 +234,6 @@ export const TranscriptionResultView: React.FC = () => {
         setLoading(false);
       }
     })();
-
-    return () => {
-      unlistenOpen.then((fn) => fn());
-      unlistenStream.then((fn) => fn());
-      unlistenDone.then((fn) => fn());
-      unlistenError.then((fn) => fn());
-    };
   }, []);
 
   const handleSend = async () => {
@@ -200,8 +253,6 @@ export const TranscriptionResultView: React.FC = () => {
     };
 
     setMessages((prev) => [...prev, userMsg, botMsg]);
-    
-    // Force scroll to bottom when user sends a message
     isUserScrolledUpRef.current = false;
     setShowScrollButton(false);
 
@@ -265,55 +316,94 @@ export const TranscriptionResultView: React.FC = () => {
     );
   };
 
+  /** Check if the first transcription message contains speaker markers */
+  const hasSpeakerLabels = useMemo(() => {
+    if (messages.length === 0) return false;
+    return /\[Speaker \d+\]/.test(messages[0].content);
+  }, [messages]);
+
   if (loading) {
     return (
-      <div className="h-screen flex flex-col bg-background text-text p-6">
-        <div className="mb-4">
-          <h1 className="text-lg font-semibold">Transcription</h1>
+      <div className="h-screen flex flex-col bg-background text-text">
+        <div className="shrink-0 px-5 py-4 border-b border-mid-gray/10">
+          <h1 className="text-base font-semibold tracking-tight">Transcription</h1>
         </div>
-        <p className="text-mid-gray">Loading…</p>
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-mid-gray text-sm">Loading...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="h-screen flex flex-col bg-background text-text p-6">
-        <div className="mb-4">
-          <h1 className="text-lg font-semibold">Transcription</h1>
+      <div className="h-screen flex flex-col bg-background text-text">
+        <div className="shrink-0 px-5 py-4 border-b border-mid-gray/10">
+          <h1 className="text-base font-semibold tracking-tight">Transcription</h1>
         </div>
-        <p className="text-red-500 text-sm">{error}</p>
+        <div className="flex-1 flex items-center justify-center px-6">
+          <p className="text-red-400 text-sm text-center">{error}</p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="h-screen flex flex-col bg-background text-text overflow-hidden relative">
-      <div className="shrink-0 px-4 py-3 border-b border-mid-gray/20">
-        <h1 className="text-lg font-semibold">Transcription</h1>
+      {/* Header */}
+      <div className="shrink-0 px-5 py-3.5 border-b border-mid-gray/10 bg-background/80 backdrop-blur-sm">
+        <div className="flex items-center justify-between">
+          <h1 className="text-base font-semibold tracking-tight">Transcription</h1>
+          {hasSpeakerLabels && (
+            <span className="text-[10px] font-medium text-mid-gray/60 uppercase tracking-widest">
+              Diarized
+            </span>
+          )}
+        </div>
       </div>
 
-      <div 
+      {/* Messages */}
+      <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-4"
+        className="flex-1 overflow-y-auto px-5 py-4 space-y-5"
       >
         {messages.map((msg, i) =>
           msg.role === "bot" ? (
-            <div key={msg.chatId ?? `bot-${i}`} className="flex flex-col items-start max-w-[85%]">
+            <div key={msg.chatId ?? `bot-${i}`} className="flex flex-col items-start">
+              {/* Speaker name label */}
               {msg.name && (
-                <span className="text-xs font-medium text-mid-gray mb-1">{msg.name}</span>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-logo-primary/60" />
+                  <span className="text-[11px] font-semibold text-mid-gray/70 uppercase tracking-wider">
+                    {msg.name}
+                  </span>
+                </div>
               )}
-              <div className="relative rounded-lg rounded-tl-none bg-mid-gray/10 px-3 py-2 text-sm whitespace-pre-wrap break-words group">
-                <div className={msg.name ? "pr-7" : ""}>
-                  {msg.content || (msg.streaming && "...")}
+              {/* Message bubble */}
+              <div className="relative w-full rounded-xl bg-mid-gray/[0.06] border border-mid-gray/[0.08] px-4 py-3 text-[13px] group">
+                <div className={msg.name ? "pr-8" : ""}>
+                  {i === 0 && hasSpeakerLabels
+                    ? parseTranscriptionContent(msg.content)
+                    : (
+                      <div className="whitespace-pre-wrap break-words leading-relaxed">
+                        {msg.content || (msg.streaming && (
+                          <span className="inline-flex gap-1 text-mid-gray">
+                            <span className="animate-bounce" style={{ animationDelay: "0ms" }}>.</span>
+                            <span className="animate-bounce" style={{ animationDelay: "150ms" }}>.</span>
+                            <span className="animate-bounce" style={{ animationDelay: "300ms" }}>.</span>
+                          </span>
+                        ))}
+                      </div>
+                    )
+                  }
                 </div>
                 {msg.name && (
                   <button
                     type="button"
                     onClick={() => handleCopy(msg.content, i)}
-                    className="absolute top-1.5 right-1.5 rounded-md p-1 text-mid-gray/50 hover:text-text hover:bg-mid-gray/20 transition-all"
-                    title="Copy message"
+                    className="absolute top-3 right-3 rounded-md p-1 text-mid-gray/30 hover:text-text hover:bg-mid-gray/10 transition-all opacity-0 group-hover:opacity-100"
+                    title="Copy"
                   >
                     {copiedIndex === i ? <Check size={14} /> : <Copy size={14} />}
                   </button>
@@ -322,7 +412,7 @@ export const TranscriptionResultView: React.FC = () => {
             </div>
           ) : (
             <div key={msg.chatId ?? `user-${i}`} className="flex justify-end">
-              <div className="rounded-lg rounded-tr-none bg-slider-fill/15 text-sm px-3 py-2 max-w-[85%] whitespace-pre-wrap break-words">
+              <div className="rounded-xl rounded-br-sm bg-logo-primary/10 border border-logo-primary/15 text-[13px] px-4 py-3 max-w-[85%] whitespace-pre-wrap break-words leading-relaxed">
                 {msg.content}
               </div>
             </div>
@@ -331,8 +421,9 @@ export const TranscriptionResultView: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Scroll to bottom */}
       {showScrollButton && (
-        <div className="absolute bottom-20 right-6 z-10">
+        <div className="absolute bottom-[72px] right-5 z-10">
           <button
             type="button"
             onClick={() => {
@@ -340,38 +431,41 @@ export const TranscriptionResultView: React.FC = () => {
               setShowScrollButton(false);
               scrollToBottom();
             }}
-            className="p-2 rounded-full bg-background border border-mid-gray/30 shadow-lg hover:bg-mid-gray/10 transition-colors"
+            className="p-2 rounded-full bg-background border border-mid-gray/20 shadow-md hover:bg-mid-gray/5 transition-colors"
             title="Scroll to bottom"
           >
-            <ArrowDown size={18} className="text-mid-gray" />
+            <ArrowDown size={16} className="text-mid-gray/60" />
           </button>
         </div>
       )}
 
-      <div className="shrink-0 p-3 border-t border-mid-gray/20 flex gap-2">
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleSend();
-            }
-          }}
-          placeholder="Ask a question about the transcription…"
-          className="flex-1 min-w-0 rounded-lg border border-mid-gray/20 bg-background px-3 py-2 text-sm placeholder:text-mid-gray focus:outline-none focus:ring-1 focus:ring-mid-gray/30"
-          disabled={sending}
-        />
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={sending || !inputValue.trim()}
-          className="shrink-0 p-2 rounded-lg bg-mid-gray/15 hover:bg-mid-gray/25 disabled:opacity-50 disabled:pointer-events-none transition-colors"
-          title="Send"
-        >
-          <Send size={18} />
-        </button>
+      {/* Input area */}
+      <div className="shrink-0 px-4 py-3 border-t border-mid-gray/10 bg-background/80 backdrop-blur-sm">
+        <div className="flex gap-2 items-end">
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="Ask about this transcription..."
+            className="flex-1 min-w-0 rounded-xl border border-mid-gray/15 bg-mid-gray/[0.04] px-4 py-2.5 text-[13px] placeholder:text-mid-gray/40 focus:outline-none focus:ring-1 focus:ring-logo-primary/30 focus:border-logo-primary/20 transition-colors"
+            disabled={sending}
+          />
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending || !inputValue.trim()}
+            className="shrink-0 p-2.5 rounded-xl bg-logo-primary/10 hover:bg-logo-primary/20 text-logo-primary disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            title="Send"
+          >
+            <Send size={16} />
+          </button>
+        </div>
       </div>
     </div>
   );

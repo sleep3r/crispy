@@ -1,15 +1,42 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Trash2, FileText, Loader2, ExternalLink } from "lucide-react";
 import { AudioPlayer } from "../../ui/AudioPlayer";
+import { useTauriListen } from "../../../hooks/useTauriListen";
 
 interface RecordingFile {
   name: string;
   path: string;
   size: number;
   created: number;
+}
+
+interface TranscriptionStatusEvent {
+  recording_path: string;
+  status: "started" | "completed" | "error";
+  error?: string;
+}
+
+interface TranscriptionProgressEvent {
+  recording_path: string;
+  progress?: number;
+  eta_seconds?: number;
+}
+
+interface TranscriptionPhaseEvent {
+  recording_path: string;
+  phase: string | null;
+}
+
+// Centralized transcription state per recording
+interface TranscriptionState {
+  status: "idle" | "transcribing" | "completed" | "error";
+  progress: number;
+  etaSeconds: number | null;
+  phase: string | null;
+  error: string | null;
+  hasResult: boolean;
 }
 
 const formatFileSize = (bytes: number): string => {
@@ -29,18 +56,42 @@ const formatDate = (timestamp: number): string => {
   });
 };
 
+const formatEta = (seconds: number | null, phase: string | null): string => {
+  if (phase === "preparing-audio") return "Preparing audio...";
+  if (phase === "transcribing") {
+    if (seconds == null) return "Transcribing...";
+    if (seconds < 1) return "Finishing...";
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return mins > 0 ? `~${mins}m ${secs}s left` : `~${secs}s left`;
+  }
+  if (phase === "diarizing") return "Identifying speakers...";
+  return "Processing...";
+};
+
 export const RecordingsHistory: React.FC = () => {
   const [recordings, setRecordings] = useState<RecordingFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentlyPlayingPath, setCurrentlyPlayingPath] = useState<string | null>(null);
 
+  // Centralized transcription state: Map<recording_path, TranscriptionState>
+  const [transcriptionStates, setTranscriptionStates] = useState<Map<string, TranscriptionState>>(
+    new Map()
+  );
+
+  const initialLoadDone = useRef(false);
+
   const loadRecordings = useCallback(async () => {
     try {
-      setLoading(true);
+      // Only show loading spinner on initial load, not on refresh
+      if (!initialLoadDone.current) {
+        setLoading(true);
+      }
       setError(null);
       const result = await invoke<RecordingFile[]>("get_recordings");
       setRecordings(result);
+      initialLoadDone.current = true;
     } catch (err) {
       console.error("Failed to load recordings:", err);
       setError(err instanceof Error ? err.message : "Failed to load recordings");
@@ -52,6 +103,78 @@ export const RecordingsHistory: React.FC = () => {
   useEffect(() => {
     loadRecordings();
   }, [loadRecordings]);
+
+  // Centralized Tauri listeners (ONE per event type, not per recording)
+  useTauriListen<TranscriptionStatusEvent>("transcription-status", (event) => {
+    const { recording_path, status, error } = event.payload;
+    setTranscriptionStates((prev) => {
+      const newMap = new Map(prev);
+      const current = newMap.get(recording_path) || {
+        status: "idle",
+        progress: 0,
+        etaSeconds: null,
+        phase: null,
+        error: null,
+        hasResult: false,
+      };
+
+      if (status === "started") {
+        newMap.set(recording_path, {
+          ...current,
+          status: "transcribing",
+          progress: 0,
+          etaSeconds: null,
+          phase: "preparing-audio",
+          error: null,
+        });
+      } else if (status === "completed") {
+        newMap.set(recording_path, {
+          ...current,
+          status: "completed",
+          progress: 1,
+          etaSeconds: 0,
+          phase: null,
+          hasResult: true,
+        });
+      } else if (status === "error") {
+        newMap.set(recording_path, {
+          ...current,
+          status: "error",
+          error: error ?? "Transcription failed",
+          phase: null,
+        });
+      }
+      return newMap;
+    });
+  });
+
+  useTauriListen<TranscriptionProgressEvent>("transcription-progress", (event) => {
+    const { recording_path, progress, eta_seconds } = event.payload;
+    setTranscriptionStates((prev) => {
+      const newMap = new Map(prev);
+      const current = newMap.get(recording_path);
+      if (current) {
+        newMap.set(recording_path, {
+          ...current,
+          progress: progress ?? current.progress,
+          etaSeconds: typeof eta_seconds === "number" ? eta_seconds : current.etaSeconds,
+        });
+      }
+      return newMap;
+    });
+  });
+
+  useTauriListen<TranscriptionPhaseEvent>("transcription-phase", (event) => {
+    const { recording_path, phase } = event.payload;
+    setTranscriptionStates((prev) => {
+      const newMap = new Map(prev);
+      const current = newMap.get(recording_path);
+      if (current) {
+        newMap.set(recording_path, { ...current, phase });
+      }
+      return newMap;
+    });
+  });
 
   const openRecordingsFolder = async () => {
     try {
@@ -72,10 +195,42 @@ export const RecordingsHistory: React.FC = () => {
 
     try {
       await invoke("delete_recording", { path });
+      // Remove from transcription state
+      setTranscriptionStates((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(path);
+        return newMap;
+      });
       await loadRecordings();
     } catch (err) {
       console.error("Failed to delete recording:", err);
       alert("Failed to delete recording. Please try again.");
+    }
+  };
+
+  const checkTranscriptionResult = async (path: string): Promise<boolean> => {
+    try {
+      return await invoke<boolean>("has_transcription_result", { recordingPath: path });
+    } catch {
+      return false;
+    }
+  };
+
+  const openTranscriptionResult = async (path: string) => {
+    try {
+      await invoke("open_transcription_window", { recordingPath: path });
+    } catch (err) {
+      console.error("Failed to open transcription result:", err);
+      alert("Failed to open transcription result.");
+    }
+  };
+
+  const transcribeRecording = async (path: string) => {
+    try {
+      await invoke("start_transcription", { recordingPath: path });
+    } catch (err) {
+      console.error("Failed to start transcription:", err);
+      alert("Failed to start transcription. Please try again.");
     }
   };
 
@@ -92,15 +247,14 @@ export const RecordingsHistory: React.FC = () => {
               onClick={openRecordingsFolder}
               className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors"
             >
-              <FolderOpen size={16} />
-              <span>Open Folder</span>
+              <FolderOpen className="w-4 h-4" />
+              Open Folder
             </button>
           </div>
-          <div className="bg-background border border-mid-gray/20 rounded-lg">
-            <div className="px-4 py-3 text-center text-mid-gray">
-              Loading recordings...
-            </div>
-          </div>
+        </div>
+        <div className="flex flex-col items-center justify-center py-16 text-mid-gray">
+          <Loader2 className="w-8 h-8 animate-spin mb-3" />
+          <p className="text-sm">Loading recordings...</p>
         </div>
       </div>
     );
@@ -119,15 +273,13 @@ export const RecordingsHistory: React.FC = () => {
               onClick={openRecordingsFolder}
               className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors"
             >
-              <FolderOpen size={16} />
-              <span>Open Folder</span>
+              <FolderOpen className="w-4 h-4" />
+              Open Folder
             </button>
           </div>
-          <div className="bg-background border border-mid-gray/20 rounded-lg">
-            <div className="px-4 py-3 text-center text-red-600 text-sm">
-              {error}
-            </div>
-          </div>
+        </div>
+        <div className="flex items-center justify-center py-16 text-red-500">
+          <p>{error}</p>
         </div>
       </div>
     );
@@ -146,15 +298,15 @@ export const RecordingsHistory: React.FC = () => {
               onClick={openRecordingsFolder}
               className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors"
             >
-              <FolderOpen size={16} />
-              <span>Open Folder</span>
+              <FolderOpen className="w-4 h-4" />
+              Open Folder
             </button>
           </div>
-          <div className="bg-background border border-mid-gray/20 rounded-lg">
-            <div className="px-4 py-3 text-center text-mid-gray">
-              No recordings yet. Start recording from the General tab.
-            </div>
-          </div>
+        </div>
+        <div className="flex flex-col items-center justify-center py-16 text-mid-gray">
+          <FileText className="w-12 h-12 mb-3 opacity-50" />
+          <p className="text-sm">No recordings yet</p>
+          <p className="text-xs mt-1">Start recording to see your audio files here</p>
         </div>
       </div>
     );
@@ -165,359 +317,171 @@ export const RecordingsHistory: React.FC = () => {
       <div className="space-y-2">
         <div className="px-4 flex items-center justify-between">
           <h2 className="text-xs font-medium text-mid-gray uppercase tracking-wide">
-            Recordings ({recordings.length})
+            Recordings
           </h2>
           <button
             type="button"
             onClick={openRecordingsFolder}
             className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 transition-colors"
           >
-            <FolderOpen size={16} />
-            <span>Open Folder</span>
+            <FolderOpen className="w-4 h-4" />
+            Open Folder
           </button>
         </div>
-        <div className="bg-background border border-mid-gray/20 rounded-lg divide-y divide-mid-gray/20">
-          {recordings.map((recording) => (
+      </div>
+
+      <div className="space-y-2">
+        {recordings.map((recording) => {
+          const transcriptionState = transcriptionStates.get(recording.path);
+          const audioUrl = `stream://localhost/${encodeURIComponent(recording.path)}`;
+
+          return (
             <RecordingEntry
               key={recording.path}
               recording={recording}
-              isActive={currentlyPlayingPath === recording.path}
-              onPlayStateChange={(playing) => {
-                setCurrentlyPlayingPath(playing ? recording.path : null);
-              }}
+              audioUrl={audioUrl}
+              transcriptionState={transcriptionState}
+              isPlaying={currentlyPlayingPath === recording.path}
+              onPlayStateChange={(playing) =>
+                setCurrentlyPlayingPath(playing ? recording.path : null)
+              }
               onDelete={() => deleteRecording(recording.path)}
-              onRename={loadRecordings}
+              onTranscribe={() => transcribeRecording(recording.path)}
+              onOpenResult={() => openTranscriptionResult(recording.path)}
+              onCheckResult={checkTranscriptionResult}
             />
-          ))}
-        </div>
+          );
+        })}
       </div>
     </div>
   );
 };
 
-type TranscriptionStatus = "idle" | "transcribing" | "completed" | "error";
-
-function nameWithoutExtension(name: string): string {
-  return name.replace(/\.wav$/i, "");
-}
-
 interface RecordingEntryProps {
   recording: RecordingFile;
-  isActive: boolean;
+  audioUrl: string;
+  transcriptionState?: TranscriptionState;
+  isPlaying: boolean;
   onPlayStateChange: (playing: boolean) => void;
   onDelete: () => void;
-  onRename: () => void;
-}
-
-interface TranscriptionStatusEvent {
-  recording_path: string;
-  status: string;
-  error?: string | null;
-}
-
-interface TranscriptionProgressEvent {
-  recording_path: string;
-  progress: number;
-  eta_seconds?: number | null;
-}
-
-interface TranscriptionPhaseEvent {
-  recording_path: string;
-  phase: string;
-}
-
-interface TranscriptionStateDto {
-  status: string;
-  progress: number;
-  eta_seconds?: number | null;
-  phase?: string | null;
+  onTranscribe: () => void;
+  onOpenResult: () => void;
+  onCheckResult: (path: string) => Promise<boolean>;
 }
 
 const RecordingEntry: React.FC<RecordingEntryProps> = ({
   recording,
-  isActive,
+  audioUrl,
+  transcriptionState,
+  isPlaying,
   onPlayStateChange,
   onDelete,
-  onRename,
+  onTranscribe,
+  onOpenResult,
+  onCheckResult,
 }) => {
-  const [audioUrl, setAudioUrl] = useState<string>("");
-  const [transcriptionStatus, setTranscriptionStatus] = useState<TranscriptionStatus>("idle");
-  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [hasResult, setHasResult] = useState(false);
-  const [transcriptionProgress, setTranscriptionProgress] = useState<number>(0);
-  const [transcriptionEtaSeconds, setTranscriptionEtaSeconds] = useState<number | null>(null);
-  const [transcriptionPhase, setTranscriptionPhase] = useState<string | null>(null);
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [editName, setEditName] = useState(nameWithoutExtension(recording.name));
-  const [renameError, setRenameError] = useState<string | null>(null);
-  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setEditName(nameWithoutExtension(recording.name));
-  }, [recording.name]);
+    onCheckResult(recording.path).then(setHasResult);
+  }, [recording.path, onCheckResult]);
 
+  // Update hasResult from transcription state
   useEffect(() => {
-    if (isEditingName && nameInputRef.current) {
-      nameInputRef.current.focus();
-      nameInputRef.current.select();
+    if (transcriptionState?.hasResult) {
+      setHasResult(true);
     }
-  }, [isEditingName]);
+  }, [transcriptionState?.hasResult]);
 
-  useEffect(() => {
-    let cancelled = false;
-    invoke<boolean>("has_transcription_result", { recordingPath: recording.path })
-      .then((ok) => {
-        if (!cancelled) setHasResult(ok);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [recording.path, transcriptionStatus]);
-
-  useEffect(() => {
-    let cancelled = false;
-    invoke<TranscriptionStateDto | null>("get_transcription_state", { recordingPath: recording.path })
-      .then((state) => {
-        if (cancelled || !state) return;
-        if (state.status === "completed") {
-          setTranscriptionStatus("completed");
-          setHasResult(true);
-          setTranscriptionProgress(1);
-          setTranscriptionEtaSeconds(0);
-          setTranscriptionPhase(null);
-        } else if (state.status === "error") {
-          setTranscriptionStatus("error");
-          setTranscriptionPhase(null);
-        } else if (state.status === "started" || state.status === "transcribing") {
-          setTranscriptionStatus("transcribing");
-          setTranscriptionProgress(state.progress ?? 0);
-          setTranscriptionEtaSeconds(
-            typeof state.eta_seconds === "number" ? state.eta_seconds : null
-          );
-          setTranscriptionPhase(state.phase ?? null);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [recording.path]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    listen<TranscriptionStatusEvent>("transcription-status", (event) => {
-      if (event.payload.recording_path !== recording.path) return;
-      const s = event.payload.status;
-      if (s === "started") {
-        setTranscriptionStatus("transcribing");
-        setTranscriptionError(null);
-        setTranscriptionProgress(0);
-        setTranscriptionEtaSeconds(null);
-        setTranscriptionPhase("preparing-audio");
-      } else if (s === "completed") {
-        setTranscriptionStatus("completed");
-        setHasResult(true);
-        setTranscriptionError(null);
-        setTranscriptionProgress(1);
-        setTranscriptionEtaSeconds(0);
-        setTranscriptionPhase(null);
-      } else if (s === "error") {
-        setTranscriptionStatus("error");
-        setTranscriptionError(event.payload.error ?? "Transcription failed");
-        setTranscriptionPhase(null);
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [recording.path]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    listen<TranscriptionProgressEvent>("transcription-progress", (event) => {
-      if (event.payload.recording_path !== recording.path) return;
-      setTranscriptionProgress(event.payload.progress ?? 0);
-      if (typeof event.payload.eta_seconds === "number") {
-        setTranscriptionEtaSeconds(event.payload.eta_seconds);
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [recording.path]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    listen<TranscriptionPhaseEvent>("transcription-phase", (event) => {
-      if (event.payload.recording_path !== recording.path) return;
-      setTranscriptionPhase(event.payload.phase);
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [recording.path]);
-
-  useEffect(() => {
-    const encoded = encodeURIComponent(recording.path);
-    setAudioUrl(`stream://localhost/${encoded}`);
-  }, [recording.path]);
-
-  const startTranscription = async () => {
-    setTranscriptionStatus("transcribing");
-    setTranscriptionError(null);
-    setTranscriptionProgress(0);
-    setTranscriptionEtaSeconds(null);
-    setTranscriptionPhase("preparing-audio");
-    try {
-      await invoke("start_transcription", { recordingPath: recording.path });
-    } catch (err) {
-      setTranscriptionStatus("error");
-      setTranscriptionError(err instanceof Error ? err.message : "Failed to start");
-    }
-  };
-
-  const openResultWindow = async () => {
-    try {
-      await invoke("open_transcription_window", { recordingPath: recording.path });
-    } catch (err) {
-      console.error("Failed to open transcription window:", err);
-    }
-  };
-
-  const saveRename = async () => {
-    const trimmed = editName.trim();
-    if (!trimmed || trimmed === nameWithoutExtension(recording.name)) {
-      setIsEditingName(false);
-      setRenameError(null);
-      return;
-    }
-    setRenameError(null);
-    try {
-      await invoke("rename_recording", { path: recording.path, newName: trimmed });
-      setIsEditingName(false);
-      onRename();
-    } catch (err) {
-      setRenameError(err instanceof Error ? err.message : "Rename failed");
-    }
-  };
-
-  const cancelRename = () => {
-    setEditName(nameWithoutExtension(recording.name));
-    setRenameError(null);
-    setIsEditingName(false);
-  };
+  const status = transcriptionState?.status || "idle";
+  const progress = transcriptionState?.progress || 0;
+  const etaSeconds = transcriptionState?.etaSeconds || null;
+  const phase = transcriptionState?.phase || null;
+  const transcriptionError = transcriptionState?.error || null;
 
   return (
-    <div className="px-4 py-3 flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        {isEditingName ? (
-          <input
-            ref={nameInputRef}
-            type="text"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            onBlur={saveRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              } else if (e.key === "Escape") {
-                cancelRename();
-                nameInputRef.current?.blur();
-              }
-            }}
-            className="text-sm font-medium bg-mid-gray/10 border border-mid-gray/30 rounded px-2 py-1 min-w-0 flex-1"
-            aria-label="Recording name"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setIsEditingName(true)}
-            className="text-sm font-medium truncate text-left hover:underline focus:outline-none focus:ring-1 focus:ring-mid-gray/30 rounded"
-            title="Click to rename"
-          >
-            {recording.name}
-          </button>
-        )}
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={startTranscription}
-            disabled={transcriptionStatus === "transcribing"}
-            className="p-2 rounded hover:bg-mid-gray/10 text-mid-gray hover:text-text transition-colors disabled:opacity-50"
-            title="Transcribe"
-          >
-            {transcriptionStatus === "transcribing" ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <FileText size={16} />
-            )}
-          </button>
-          {transcriptionStatus === "transcribing" && (
-            <div className="text-[11px] text-mid-gray min-w-[88px] text-right">
-              {formatEta(transcriptionEtaSeconds, transcriptionProgress, transcriptionPhase)}
+    <div className="bg-background border border-mid-gray/10 rounded-lg p-4 hover:border-mid-gray/20 transition-colors">
+      <div className="space-y-3">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-medium text-foreground truncate">{recording.name}</h3>
+            <div className="flex items-center gap-3 mt-1 text-xs text-mid-gray">
+              <span>{formatDate(recording.created)}</span>
+              <span>{formatFileSize(recording.size)}</span>
             </div>
-          )}
-          {(hasResult || transcriptionStatus === "completed") && (
-            <button
-              type="button"
-              onClick={openResultWindow}
-              className="p-2 rounded hover:bg-mid-gray/10 text-mid-gray hover:text-text transition-colors"
-              title="View transcription result"
-            >
-              <ExternalLink size={16} />
-            </button>
-          )}
+          </div>
           <button
             type="button"
             onClick={onDelete}
-            className="p-2 rounded hover:bg-red-500/10 text-mid-gray hover:text-red-500 transition-colors"
-            title="Delete recording"
+            className="p-1.5 rounded hover:bg-red-500/10 hover:text-red-500 transition-colors"
+            aria-label="Delete recording"
           >
-            <Trash2 size={16} />
+            <Trash2 className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Audio Player */}
+        <AudioPlayer
+          src={audioUrl}
+          isActive={isPlaying}
+          onPlayStateChange={onPlayStateChange}
+          className="w-full"
+        />
+
+        {/* Transcription Status */}
+        {status === "transcribing" && (
+          <div className="space-y-2 p-3 bg-blue-500/5 border border-blue-500/20 rounded-md">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-blue-600 dark:text-blue-400 font-medium">
+                {formatEta(etaSeconds, phase)}
+              </span>
+              <span className="text-mid-gray">{Math.round(progress * 100)}%</span>
+            </div>
+            <div className="w-full h-1.5 bg-mid-gray/10 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 transition-all duration-300"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {transcriptionError && (
+          <div className="p-3 bg-red-500/5 border border-red-500/20 rounded-md">
+            <p className="text-xs text-red-600 dark:text-red-400">{transcriptionError}</p>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onTranscribe}
+            disabled={status === "transcribing"}
+            className="flex-1 px-3 py-2 text-sm rounded-md border border-mid-gray/20 bg-background hover:bg-mid-gray/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {status === "transcribing" ? (
+              <span className="flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Transcribing...
+              </span>
+            ) : (
+              "Transcribe"
+            )}
+          </button>
+          {hasResult && (
+            <button
+              type="button"
+              onClick={onOpenResult}
+              className="flex items-center gap-2 px-3 py-2 text-sm rounded-md bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+            >
+              <ExternalLink className="w-4 h-4" />
+              View Result
+            </button>
+          )}
+        </div>
       </div>
-      {transcriptionStatus === "error" && transcriptionError && (
-        <p className="text-xs text-red-500">{transcriptionError}</p>
-      )}
-      {renameError && (
-        <p className="text-xs text-red-500">{renameError}</p>
-      )}
-      <div className="flex items-center gap-3 text-xs text-mid-gray">
-        <span>{formatDate(recording.created)}</span>
-        <span>•</span>
-        <span>{formatFileSize(recording.size)}</span>
-      </div>
-      <AudioPlayer
-        src={audioUrl}
-        isActive={isActive}
-        onPlayStateChange={onPlayStateChange}
-        className="w-full"
-      />
     </div>
   );
 };
-
-function formatEta(etaSeconds: number | null, progress: number, phase: string | null): string {
-  if (etaSeconds === null || Number.isNaN(etaSeconds)) {
-    if (progress > 0) return `${Math.round(progress * 100)}%`;
-    if (phase === "loading-model") return "Loading model...";
-    if (phase === "preparing-audio") return "Preparing audio...";
-    if (phase === "transcribing") return "Estimating...";
-    return "Estimating...";
-  }
-  const clamped = Math.max(0, Math.floor(etaSeconds));
-  const minutes = Math.floor(clamped / 60);
-  const seconds = clamped % 60;
-  const time = `${minutes}:${seconds.toString().padStart(2, "0")}`;
-  const pct = Math.max(0, Math.min(100, Math.round(progress * 100)));
-  return `${time} left ${pct}%`;
-}

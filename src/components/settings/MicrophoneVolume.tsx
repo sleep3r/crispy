@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { Slider } from "../ui/Slider";
 import { SettingContainer } from "../ui/SettingContainer";
 import { useSettings } from "../../hooks/useSettings";
+import { useTauriListen } from "../../hooks/useTauriListen";
 
 let cachedSystemVolume: number | null = null;
 let cachedSystemVolumeSupported: boolean | null = null;
@@ -43,9 +43,27 @@ export const MicrophoneVolume: React.FC = () => {
   volumeRef.current = volume;
   modelRef.current = selectedModel;
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
+  // Setup global microphone level listener with proper lifecycle
+  useTauriListen<number>("microphone-level", (event) => {
+    const raw = event.payload;
+    // macOS-like feel: ignore noise floor + faster peak
+    const noiseFloor = 0.01;
+    const gain = 5.2;
+    const normalized = Math.max(0, raw - noiseFloor) / (1 - noiseFloor);
+    const curved = Math.pow(Math.min(normalized * gain, 1), 0.3);
+    let visual = Math.min(curved, 1);
 
+    if (modelRef.current === "noisy") {
+      const noiseBase = 0.08;
+      const noiseJitter = (Math.random() - 0.5) * 0.06;
+      visual = Math.min(Math.max(visual + noiseBase + noiseJitter, 0), 1);
+    }
+
+    lastLevel.current = lastLevel.current * 0.7 + visual * 0.3;
+  });
+
+  // Start/stop monitoring when microphone changes
+  useEffect(() => {
     if (!selectedMicrophone) {
       lastLevel.current = 0;
       if (meterRef.current) meterRef.current.style.width = "0%";
@@ -54,24 +72,6 @@ export const MicrophoneVolume: React.FC = () => {
 
     const init = async () => {
       try {
-        unlisten = await listen<number>("microphone-level", (event) => {
-          const raw = event.payload;
-          // macOS-like feel: ignore noise floor + faster peak
-          const noiseFloor = 0.01;
-          const gain = 5.2;
-          const normalized = Math.max(0, raw - noiseFloor) / (1 - noiseFloor);
-          const curved = Math.pow(Math.min(normalized * gain, 1), 0.3);
-          let visual = Math.min(curved, 1);
-
-          if (modelRef.current === "noisy") {
-            const noiseBase = 0.08;
-            const noiseJitter = (Math.random() - 0.5) * 0.06;
-            visual = Math.min(Math.max(visual + noiseBase + noiseJitter, 0), 1);
-          }
-
-          lastLevel.current = lastLevel.current * 0.7 + visual * 0.3;
-        });
-
         const effectiveVolume = systemVolumeState === "ready" ? 1 : volume / 100;
         await invoke("start_monitoring", {
           deviceName: selectedMicrophone,
@@ -104,11 +104,10 @@ export const MicrophoneVolume: React.FC = () => {
     requestRef.current = requestAnimationFrame(animate);
 
     return () => {
-      if (unlisten) unlisten();
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
       invoke("stop_monitoring").catch(console.error);
     };
-  }, [selectedMicrophone, selectedOutputDevice, systemVolumeState]);
+  }, [selectedMicrophone, selectedOutputDevice, systemVolumeState, volume, selectedModel]);
 
   useEffect(() => {
     if (!selectedMicrophone || systemVolumeState === "ready") return;

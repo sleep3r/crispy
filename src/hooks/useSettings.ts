@@ -8,7 +8,8 @@ type SettingKey =
   | "selected_model"
   | "selected_transcription_model"
   | "selected_recording_app"
-  | "autostart_enabled";
+  | "autostart_enabled"
+  | "diarization_enabled";
 
 interface AudioDevice {
   id: string;
@@ -23,6 +24,7 @@ interface SettingsState {
   selected_transcription_model: string;
   selected_recording_app: string;
   autostart_enabled: string;
+  diarization_enabled: string;
 }
 
 const defaultSettings: SettingsState = {
@@ -33,6 +35,7 @@ const defaultSettings: SettingsState = {
   selected_transcription_model: "none",
   selected_recording_app: "none",
   autostart_enabled: "false",
+  diarization_enabled: "false",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };

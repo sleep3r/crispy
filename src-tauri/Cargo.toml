@@ -36,6 +36,10 @@ ort = "=2.0.0-rc.10"
 ort-sys = "=2.0.0-rc.10"
 # Noise suppression: RNNoise port (path to ./rnnnoise in project root)
 nnnoiseless = "0.5.2"
+# Speaker diarization
+pyannote-rs = "0.3"
+ndarray = "0.16"
+eyre = "0.6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
