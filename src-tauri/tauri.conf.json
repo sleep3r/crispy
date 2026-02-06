@@ -28,10 +28,10 @@
       ],
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$DOCUMENT/Crispy/Recordings/**",
-          "$DOCUMENT/Crispy/Transcriptions/**"
-        ]
+        "scope": {
+          "allow": ["**"],
+          "requireLiteralLeadingDot": false
+        }
       }
     }
   },
