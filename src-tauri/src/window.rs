@@ -44,35 +44,43 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+fn show_tray_popup_window(window: &tauri::WebviewWindow) {
+    let _ = window.set_always_on_top(true);
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.set_visible_on_all_workspaces(true);
+        configure_popup_for_fullscreen(window);
+    }
+
+    // Record the moment we show the popup so blur events can be ignored during grace period
+    crate::TRAY_POPUP_SHOWN_AT.store(crate::epoch_millis(), std::sync::atomic::Ordering::SeqCst);
+
+    let _ = window.show();
+
+    // macOS: don't force focus immediately (reduces switching out of fullscreen)
+    // Windows/Linux: force focus so click-outside triggers blur and hides the tray.
+    #[cfg(not(target_os = "macos"))]
+    let _ = window.set_focus();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.move_window(Position::TrayBottomCenter);
+        // After Finder activation workaround, restore focus to the tray window
+        let window_clone = window.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let _ = window_clone.set_focus();
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window.move_window(Position::TrayCenter);
+}
+
 pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("tray-popup") {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
         } else {
-            let _ = window.set_always_on_top(true);
-            #[cfg(target_os = "macos")]
-            {
-                let _ = window.set_visible_on_all_workspaces(true);
-                configure_popup_for_fullscreen(&window);
-            }
-            let _ = window.show();
-            // macOS: don't force focus (reduces switching out of fullscreen)
-            // Windows/Linux: force focus so click-outside triggers blur and hides the tray.
-            #[cfg(not(target_os = "macos"))]
-            let _ = window.set_focus();
-            #[cfg(target_os = "macos")]
-            {
-                let _ = window.move_window(Position::TrayBottomCenter);
-                // After Finder activation workaround, we need to restore focus to the tray window
-                // Small delay to ensure window is fully shown
-                let window_clone = window.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(150));
-                    let _ = window_clone.set_focus();
-                });
-            }
-            #[cfg(not(target_os = "macos"))]
-            let _ = window.move_window(Position::TrayCenter);
+            show_tray_popup_window(&window);
         }
         return;
     }
@@ -86,27 +94,6 @@ pub fn show_or_toggle_tray_popup(app: &tauri::AppHandle) {
         .build();
 
     if let Some(window) = app.get_webview_window("tray-popup") {
-        let _ = window.set_always_on_top(true);
-        #[cfg(target_os = "macos")]
-        {
-            let _ = window.set_visible_on_all_workspaces(true);
-            configure_popup_for_fullscreen(&window);
-        }
-        let _ = window.show();
-        #[cfg(not(target_os = "macos"))]
-        let _ = window.set_focus();
-        #[cfg(target_os = "macos")]
-        {
-            let _ = window.move_window(Position::TrayBottomCenter);
-            // After Finder activation workaround, we need to restore focus to the tray window
-            // Small delay to ensure window is fully shown
-            let window_clone = window.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let _ = window_clone.set_focus();
-            });
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = window.move_window(Position::TrayCenter);
+        show_tray_popup_window(&window);
     }
 }

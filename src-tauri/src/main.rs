@@ -18,9 +18,11 @@ mod system_input_volume;
 mod windows_audio;
 
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::thread;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
+use std::time::SystemTime;
 
 use app_state::AppState;
 use audio::AudioMonitorState;
@@ -29,6 +31,17 @@ use tauri::tray::{TrayIconEvent};
 use tauri::Manager;
 use tauri_plugin_positioner;
 use tauri_plugin_autostart::ManagerExt;
+
+/// Timestamp (epoch millis) when the tray popup was last shown.
+/// Used to ignore spurious blur events during the Finder activation workaround.
+static TRAY_POPUP_SHOWN_AT: AtomicU64 = AtomicU64::new(0);
+
+fn epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 #[tauri::command]
 fn get_platform() -> Result<String, String> {
@@ -53,6 +66,10 @@ fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
     let start_str = parts.next()?.trim();
     let end_str = parts.next()?.trim();
 
+    if file_size == 0 {
+        return None;
+    }
+
     if start_str.is_empty() {
         // Suffix range: bytes=-500
         let suffix: u64 = end_str.parse().ok()?;
@@ -60,6 +77,9 @@ fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
         Some((start, file_size - 1))
     } else {
         let start: u64 = start_str.parse().ok()?;
+        if start >= file_size {
+            return None;
+        }
         let end = if end_str.is_empty() {
             file_size - 1
         } else {
@@ -282,6 +302,15 @@ fn main() {
                 }
                 tauri::WindowEvent::Focused(false) => {
                     if window.label() == "tray-popup" {
+                        // Grace period: ignore blur events within 600ms of showing the popup.
+                        // The Finder activation workaround causes spurious focus loss
+                        // that would otherwise immediately hide the popup.
+                        let shown_at = TRAY_POPUP_SHOWN_AT.load(AtomicOrdering::SeqCst);
+                        let now = epoch_millis();
+                        if now.saturating_sub(shown_at) < 600 {
+                            // Too soon after showing — ignore this blur
+                            return;
+                        }
                         let _ = window.hide();
                     }
                 }
