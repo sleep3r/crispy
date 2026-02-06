@@ -34,10 +34,28 @@ pub struct AppSettings {
     pub autostart_enabled: String,
     #[serde(default = "default_false_string")]
     pub diarization_enabled: String,
+    #[serde(default = "default_diarization_max_speakers")]
+    pub diarization_max_speakers: String,
+    #[serde(default = "default_diarization_threshold")]
+    pub diarization_threshold: String,
+    #[serde(default = "default_diarization_merge_gap")]
+    pub diarization_merge_gap: String,
 }
 
 fn default_false_string() -> String {
     "false".to_string()
+}
+
+fn default_diarization_max_speakers() -> String {
+    "3".to_string()
+}
+
+fn default_diarization_threshold() -> String {
+    "0.30".to_string()
+}
+
+fn default_diarization_merge_gap() -> String {
+    "2.5".to_string()
 }
 
 impl Default for AppSettings {
@@ -51,6 +69,9 @@ impl Default for AppSettings {
             selected_recording_app: "none".to_string(),
             autostart_enabled: "false".to_string(),
             diarization_enabled: "false".to_string(),
+            diarization_max_speakers: "3".to_string(),
+            diarization_threshold: "0.30".to_string(),
+            diarization_merge_gap: "2.5".to_string(),
         }
     }
 }
@@ -179,6 +200,9 @@ pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<(
         "selected_recording_app" => settings.selected_recording_app = value,
         "autostart_enabled" => settings.autostart_enabled = value,
         "diarization_enabled" => settings.diarization_enabled = value,
+        "diarization_max_speakers" => settings.diarization_max_speakers = value,
+        "diarization_threshold" => settings.diarization_threshold = value,
+        "diarization_merge_gap" => settings.diarization_merge_gap = value,
         _ => return Err(anyhow::anyhow!("Unknown setting key: {}", key)),
     }
     save_app_settings(app, &settings)

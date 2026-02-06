@@ -9,7 +9,10 @@ type SettingKey =
   | "selected_transcription_model"
   | "selected_recording_app"
   | "autostart_enabled"
-  | "diarization_enabled";
+  | "diarization_enabled"
+  | "diarization_max_speakers"
+  | "diarization_threshold"
+  | "diarization_merge_gap";
 
 interface AudioDevice {
   id: string;
@@ -25,6 +28,9 @@ interface SettingsState {
   selected_recording_app: string;
   autostart_enabled: string;
   diarization_enabled: string;
+  diarization_max_speakers: string;
+  diarization_threshold: string;
+  diarization_merge_gap: string;
 }
 
 const defaultSettings: SettingsState = {
@@ -36,6 +42,9 @@ const defaultSettings: SettingsState = {
   selected_recording_app: "none",
   autostart_enabled: "false",
   diarization_enabled: "false",
+  diarization_max_speakers: "3",
+  diarization_threshold: "0.30",
+  diarization_merge_gap: "2.5",
 };
 
 let settingsState: SettingsState = { ...defaultSettings };

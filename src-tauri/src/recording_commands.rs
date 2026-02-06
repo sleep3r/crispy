@@ -324,12 +324,93 @@ pub fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Parse WAV file header to extract duration.
+/// Returns None if parsing fails (not a valid WAV).
+/// Handles WAV files with extra chunks (LIST, INFO, etc.) by searching for "data" chunk.
+fn get_wav_duration(path: &Path) -> Option<f64> {
+    use std::io::{Read, Seek, SeekFrom};
+    
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut header = [0u8; 12];
+    
+    // Read RIFF header (12 bytes)
+    file.read_exact(&mut header).ok()?;
+    
+    // Check for "RIFF" and "WAVE" signatures
+    if &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return None;
+    }
+    
+    let mut sample_rate = 0u32;
+    let mut num_channels = 0u16;
+    let mut bits_per_sample = 0u16;
+    let mut data_size = 0u32;
+    
+    // Search for "fmt " and "data" chunks
+    let mut chunks_found = vec![];
+    loop {
+        let mut chunk_header = [0u8; 8];
+        if file.read_exact(&mut chunk_header).is_err() {
+            break;
+        }
+        
+        let chunk_id = &chunk_header[0..4];
+        let chunk_id_str = String::from_utf8_lossy(chunk_id);
+        let chunk_size = u32::from_le_bytes([
+            chunk_header[4], chunk_header[5], chunk_header[6], chunk_header[7]
+        ]);
+        
+        chunks_found.push(format!("{} ({})", chunk_id_str, chunk_size));
+        
+        if chunk_id == b"fmt " {
+            // Read fmt chunk (should be at least 16 bytes for PCM)
+            let mut fmt_data = vec![0u8; chunk_size as usize];
+            file.read_exact(&mut fmt_data).ok()?;
+            
+            if fmt_data.len() >= 16 {
+                num_channels = u16::from_le_bytes([fmt_data[2], fmt_data[3]]);
+                sample_rate = u32::from_le_bytes([fmt_data[4], fmt_data[5], fmt_data[6], fmt_data[7]]);
+                bits_per_sample = u16::from_le_bytes([fmt_data[14], fmt_data[15]]);
+            }
+        } else if chunk_id == b"data" {
+            data_size = chunk_size;
+            // Found data chunk, we have everything we need
+            break;
+        } else {
+            // Skip unknown chunk
+            file.seek(SeekFrom::Current(chunk_size as i64)).ok()?;
+        }
+    }
+    
+    if sample_rate == 0 || bits_per_sample == 0 || num_channels == 0 || data_size == 0 {
+        eprintln!(
+            "[WAV] Failed to parse {}: sr={}, bits={}, ch={}, data_size={}, chunks={:?}",
+            path.display(), sample_rate, bits_per_sample, num_channels, data_size, chunks_found
+        );
+        return None;
+    }
+    
+    // Calculate duration
+    let bytes_per_sample = (bits_per_sample / 8) as u32;
+    let num_samples = data_size / (bytes_per_sample * num_channels as u32);
+    let duration_seconds = num_samples as f64 / sample_rate as f64;
+    
+    eprintln!(
+        "[WAV] Parsed {}: {:.1}s (sr={}, ch={}, bits={}, chunks={:?})",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+        duration_seconds, sample_rate, num_channels, bits_per_sample, chunks_found
+    );
+    
+    Some(duration_seconds)
+}
+
 #[derive(serde::Serialize)]
 pub struct RecordingFile {
     pub name: String,
     pub path: String,
     pub size: u64,
     pub created: u64,
+    pub duration_seconds: Option<f64>,  // Duration from WAV header
 }
 
 #[tauri::command]
@@ -358,6 +439,9 @@ pub fn get_recordings(app: AppHandle) -> Result<Vec<RecordingFile>, String> {
                 .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .unwrap_or(0);
 
+            // Parse WAV header to get duration (fast, only reads 44 bytes)
+            let duration_seconds = get_wav_duration(&path);
+            
             recordings.push(RecordingFile {
                 name: path
                     .file_name()
@@ -367,6 +451,7 @@ pub fn get_recordings(app: AppHandle) -> Result<Vec<RecordingFile>, String> {
                 path: path.to_string_lossy().to_string(),
                 size: metadata.len(),
                 created,
+                duration_seconds,
             });
         }
     }

@@ -6,6 +6,7 @@ interface AudioPlayerProps {
   isActive: boolean;
   onPlayStateChange: (playing: boolean) => void;
   className?: string;
+  initialDuration?: number | null;  // Duration from backend (seconds)
 }
 
 const VOLUME_STORAGE_KEY = "crispy_audio_volume";
@@ -32,9 +33,12 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   isActive,
   onPlayStateChange,
   className = "",
+  initialDuration,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [duration, setDuration] = useState<number | null>(null);
+  const [duration, setDuration] = useState<number | null>(
+    initialDuration && initialDuration > 0 ? initialDuration : null
+  );
   const [currentTime, setCurrentTime] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [volume, setVolume] = useState(getStoredVolume());

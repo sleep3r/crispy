@@ -167,12 +167,18 @@ fn pyannote_get_segments_fixed(
 ///
 /// IMPORTANT: This function REQUIRES 16kHz mono audio.
 /// Pass resampled audio from transcription pipeline, not raw WAV samples.
+///
+/// Parameters:
+/// - `threshold`: cosine distance threshold for speaker matching (lower = more lenient, fewer speakers). Default 0.30.
+/// - `merge_gap`: max gap in seconds to merge consecutive same-speaker segments. Default 2.5.
 pub fn run_diarization(
     samples_i16: &[i16],
     sample_rate: u32,
     segmentation_model_path: &PathBuf,
     embedding_model_path: &PathBuf,
     max_speakers: usize,
+    threshold: f64,
+    merge_gap: f64,
 ) -> Result<Vec<SpeakerSegment>> {
     // Enforce 16kHz requirement
     if sample_rate != 16_000 {
@@ -222,7 +228,7 @@ pub fn run_diarization(
                         .map(|s| format!("Speaker {}", s + 1))
                         .unwrap_or_else(|_| "Speaker ?".to_string())
                 } else {
-                    let id = manager.search_speaker(emb, 0.5);
+                    let id = manager.search_speaker(emb, threshold as f32);
                     match id {
                         Some(s) => format!("Speaker {}", s + 1),
                         None => {
@@ -253,20 +259,20 @@ pub fn run_diarization(
     );
 
     // Merge consecutive segments by the same speaker
-    let merged = merge_consecutive_segments(&result);
+    let merged = merge_consecutive_segments(&result, merge_gap);
     info!("Diarization complete: {} segments", merged.len());
     Ok(merged)
 }
 
 /// Merge consecutive segments that have the same speaker label.
-fn merge_consecutive_segments(segments: &[SpeakerSegment]) -> Vec<SpeakerSegment> {
+fn merge_consecutive_segments(segments: &[SpeakerSegment], merge_gap: f64) -> Vec<SpeakerSegment> {
     if segments.is_empty() {
         return Vec::new();
     }
     let mut merged: Vec<SpeakerSegment> = Vec::new();
     for seg in segments {
         if let Some(last) = merged.last_mut() {
-            if last.speaker == seg.speaker && (seg.start - last.end).abs() < 0.5 {
+            if last.speaker == seg.speaker && (seg.start - last.end).abs() < merge_gap {
                 last.end = seg.end;
                 continue;
             }
@@ -289,6 +295,9 @@ pub fn f32_to_i16(samples: &[f32]) -> Vec<i16> {
 
 /// Format diarized transcription: combine speaker labels with transcription text chunks.
 /// Each chunk has a start time (in seconds). We match each chunk to the speaker active at that time.
+///
+/// Output format: `[Speaker N|seconds]` markers followed by text lines.
+/// The `seconds` value lets the frontend display timestamps.
 pub fn format_diarized_text(
     text_chunks: &[(f64, String)], // (start_time_seconds, text)
     speaker_segments: &[SpeakerSegment],
@@ -315,7 +324,8 @@ pub fn format_diarized_text(
 
         if current_speaker.as_ref() != Some(&speaker) {
             current_speaker = Some(speaker.clone());
-            lines.push(format!("\n[{}]", speaker));
+            // Format: [Speaker N|seconds] where seconds is the float timestamp
+            lines.push(format!("\n[{}|{:.1}]", speaker, start_time));
         }
         lines.push(trimmed.to_string());
     }

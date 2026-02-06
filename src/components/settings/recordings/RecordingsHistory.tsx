@@ -10,6 +10,7 @@ interface RecordingFile {
   path: string;
   size: number;
   created: number;
+  duration_seconds?: number | null;
 }
 
 interface TranscriptionStatusEvent {
@@ -349,6 +350,7 @@ export const RecordingsHistory: React.FC = () => {
               onTranscribe={() => transcribeRecording(recording.path)}
               onOpenResult={() => openTranscriptionResult(recording.path)}
               onCheckResult={checkTranscriptionResult}
+              onRename={loadRecordings}
             />
           );
         })}
@@ -367,6 +369,7 @@ interface RecordingEntryProps {
   onTranscribe: () => void;
   onOpenResult: () => void;
   onCheckResult: (path: string) => Promise<boolean>;
+  onRename: () => void;
 }
 
 const RecordingEntry: React.FC<RecordingEntryProps> = ({
@@ -379,8 +382,13 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
   onTranscribe,
   onOpenResult,
   onCheckResult,
+  onRename,
 }) => {
   const [hasResult, setHasResult] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     onCheckResult(recording.path).then(setHasResult);
@@ -393,11 +401,61 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
     }
   }, [transcriptionState?.hasResult]);
 
+  // Focus and select all when editing starts
+  useEffect(() => {
+    if (isEditingName && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditingName]);
+
   const status = transcriptionState?.status || "idle";
   const progress = transcriptionState?.progress || 0;
   const etaSeconds = transcriptionState?.etaSeconds || null;
   const phase = transcriptionState?.phase || null;
   const transcriptionError = transcriptionState?.error || null;
+
+  const handleNameClick = () => {
+    // Extract name without extension
+    const nameWithoutExt = recording.name.replace(/\.wav$/i, "");
+    setEditName(nameWithoutExt);
+    setRenameError(null);
+    setIsEditingName(true);
+  };
+
+  const handleRename = async () => {
+    const trimmed = editName.trim();
+    if (!trimmed) {
+      setIsEditingName(false);
+      setRenameError(null);
+      return;
+    }
+    
+    const currentNameWithoutExt = recording.name.replace(/\.wav$/i, "");
+    if (trimmed === currentNameWithoutExt) {
+      setIsEditingName(false);
+      setRenameError(null);
+      return;
+    }
+
+    setRenameError(null);
+    try {
+      await invoke("rename_recording", { path: recording.path, newName: trimmed });
+      setIsEditingName(false);
+      onRename(); // Reload recordings list
+    } catch (err) {
+      setRenameError(err instanceof Error ? err.message : "Rename failed");
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleRename();
+    } else if (e.key === "Escape") {
+      setIsEditingName(false);
+      setRenameError(null);
+    }
+  };
 
   return (
     <div className="bg-background border border-mid-gray/10 rounded-lg p-4 hover:border-mid-gray/20 transition-colors">
@@ -405,7 +463,32 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
         {/* Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
-            <h3 className="text-sm font-medium text-foreground truncate">{recording.name}</h3>
+            {isEditingName ? (
+              <div>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={handleRename}
+                  onKeyDown={handleKeyDown}
+                  className="w-full px-2 py-1 text-sm font-medium bg-background border border-blue-500 rounded focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                />
+                {renameError && (
+                  <p className="mt-1 text-xs text-red-500">{renameError}</p>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleNameClick}
+                className="text-left w-full group"
+              >
+                <h3 className="text-sm font-medium text-foreground truncate group-hover:text-blue-500 transition-colors">
+                  {recording.name}
+                </h3>
+              </button>
+            )}
             <div className="flex items-center gap-3 mt-1 text-xs text-mid-gray">
               <span>{formatDate(recording.created)}</span>
               <span>{formatFileSize(recording.size)}</span>
@@ -426,6 +509,7 @@ const RecordingEntry: React.FC<RecordingEntryProps> = ({
           src={audioUrl}
           isActive={isPlaying}
           onPlayStateChange={onPlayStateChange}
+          initialDuration={recording.duration_seconds}
           className="w-full"
         />
 

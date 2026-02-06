@@ -122,11 +122,16 @@ fn run_transcription(
         return Err("No transcription model selected. Choose a model in the bottom left corner.".into());
     }
 
-    // Check if diarization is enabled
-    let diarization_enabled = crate::llm_settings::load_app_settings(app)
-        .map(|s| s.diarization_enabled == "true")
-        .unwrap_or(false);
-    eprintln!("[transcription] diarization_enabled = {}", diarization_enabled);
+    // Load diarization settings
+    let app_settings = crate::llm_settings::load_app_settings(app).unwrap_or_default();
+    let diarization_enabled = app_settings.diarization_enabled == "true";
+    let diarization_max_speakers: usize = app_settings.diarization_max_speakers.parse().unwrap_or(3);
+    let diarization_threshold: f64 = app_settings.diarization_threshold.parse().unwrap_or(0.30);
+    let diarization_merge_gap: f64 = app_settings.diarization_merge_gap.parse().unwrap_or(2.5);
+    eprintln!(
+        "[transcription] diarization: enabled={}, max_speakers={}, threshold={}, merge_gap={}",
+        diarization_enabled, diarization_max_speakers, diarization_threshold, diarization_merge_gap
+    );
 
     let _ = app.emit(
         "transcription-phase",
@@ -405,7 +410,9 @@ fn run_transcription(
                     sr,
                     &seg,
                     &emb,
-                    6, // max speakers
+                    diarization_max_speakers,
+                    diarization_threshold,
+                    diarization_merge_gap,
                 ) {
                     Ok(speaker_segments) => {
                         eprintln!("[transcription] diarization OK: {} speaker segments found", speaker_segments.len());

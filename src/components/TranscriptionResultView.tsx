@@ -2,6 +2,10 @@ import React, { useEffect, useState, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Copy, Check, Send, ArrowDown } from "lucide-react";
 import { useTauriListen } from "../hooks/useTauriListen";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/atom-one-dark.css";
 
 const getPathFromQuery = (): string | null => {
   const params = new URLSearchParams(globalThis.location.search);
@@ -18,65 +22,190 @@ type ChatMessage = {
 
 /** Speaker label colors - muted, accessible palette */
 const SPEAKER_COLORS = [
-  { bg: "bg-blue-500/10", text: "text-blue-400", border: "border-blue-500/30" },
-  { bg: "bg-emerald-500/10", text: "text-emerald-400", border: "border-emerald-500/30" },
-  { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/30" },
-  { bg: "bg-purple-500/10", text: "text-purple-400", border: "border-purple-500/30" },
-  { bg: "bg-rose-500/10", text: "text-rose-400", border: "border-rose-500/30" },
-  { bg: "bg-cyan-500/10", text: "text-cyan-400", border: "border-cyan-500/30" },
+  { bg: "bg-blue-500/10", text: "text-blue-400", dot: "bg-blue-400" },
+  { bg: "bg-emerald-500/10", text: "text-emerald-400", dot: "bg-emerald-400" },
+  { bg: "bg-amber-500/10", text: "text-amber-400", dot: "bg-amber-400" },
+  { bg: "bg-purple-500/10", text: "text-purple-400", dot: "bg-purple-400" },
+  { bg: "bg-rose-500/10", text: "text-rose-400", dot: "bg-rose-400" },
+  { bg: "bg-cyan-500/10", text: "text-cyan-400", dot: "bg-cyan-400" },
 ];
 
 function getSpeakerColor(speaker: string) {
-  // Extract number from "Speaker N" or use hash
   const match = /\d+/.exec(speaker);
   const idx = match ? (Number.parseInt(match[0], 10) - 1) : 0;
   return SPEAKER_COLORS[idx % SPEAKER_COLORS.length];
 }
 
-/** Parse transcription text that may contain [Speaker N] markers */
-function parseTranscriptionContent(content: string): React.ReactNode {
+/** Format seconds as M:SS or H:MM:SS */
+function formatTimestamp(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+type TranscriptSegment = {
+  speaker: string;
+  timestamp: number | null;
+  text: string;
+};
+
+/** Parse transcription text that may contain [Speaker N] or [Speaker N|seconds] markers */
+function parseTranscriptionSegments(content: string): TranscriptSegment[] {
   const lines = content.split("\n");
-  const elements: React.ReactNode[] = [];
+  const segments: TranscriptSegment[] = [];
   let currentSpeaker: string | null = null;
+  let currentTimestamp: number | null = null;
   let currentBlock: string[] = [];
 
   const flushBlock = () => {
-    if (currentBlock.length === 0) return;
-    const text = currentBlock.join("\n").trim();
-    if (!text) {
-      currentBlock = [];
-      return;
-    }
-    if (currentSpeaker) {
-      const color = getSpeakerColor(currentSpeaker);
-      elements.push(
-        <div key={`block-${elements.length}`} className={`border-l-2 ${color.border} pl-3 py-1.5 my-2`}>
-          <span className={`text-[11px] font-semibold uppercase tracking-wider ${color.text} ${color.bg} rounded px-1.5 py-0.5`}>
-            {currentSpeaker}
-          </span>
-          <p className="mt-1 leading-relaxed">{text}</p>
-        </div>
-      );
-    } else {
-      elements.push(
-        <p key={`block-${elements.length}`} className="leading-relaxed my-1">{text}</p>
-      );
+    const text = currentBlock.join(" ").trim();
+    if (text && currentSpeaker) {
+      segments.push({
+        speaker: currentSpeaker,
+        timestamp: currentTimestamp,
+        text,
+      });
+    } else if (text) {
+      segments.push({ speaker: "", timestamp: null, text });
     }
     currentBlock = [];
   };
 
   for (const line of lines) {
-    const speakerMatch = /^\[(.+?)\]\s*$/.exec(line);
+    // Match [Speaker N|seconds] or [Speaker N]
+    const speakerMatch = /^\[(.+?)(?:\|(\d+(?:\.\d+)?))?\]\s*$/.exec(line);
     if (speakerMatch) {
       flushBlock();
       currentSpeaker = speakerMatch[1];
-    } else {
-      currentBlock.push(line);
+      currentTimestamp = speakerMatch[2] ? Number.parseFloat(speakerMatch[2]) : null;
+    } else if (line.trim()) {
+      currentBlock.push(line.trim());
     }
   }
   flushBlock();
 
-  return <>{elements}</>;
+  return segments;
+}
+
+/** Render diarized meeting transcript with inline speaker tags and timeline */
+function renderMeetingTranscript(content: string): React.ReactNode {
+  const segments = parseTranscriptionSegments(content);
+  if (segments.length === 0) {
+    return <p className="leading-relaxed text-mid-gray/60">(Empty transcription)</p>;
+  }
+
+  // Check if any segments have speakers (diarized content)
+  const hasSpeakers = segments.some((s) => s.speaker);
+  if (!hasSpeakers) {
+    return <div className="whitespace-pre-wrap break-words leading-relaxed">{content}</div>;
+  }
+
+  return (
+    <div className="space-y-0">
+      {segments.map((seg, i) => {
+        const color = seg.speaker ? getSpeakerColor(seg.speaker) : null;
+        const prevSpeaker = i > 0 ? segments[i - 1].speaker : null;
+        const isSameSpeaker = seg.speaker === prevSpeaker;
+
+        return (
+          <div key={`seg-${i}`} className={isSameSpeaker ? "mt-1" : "mt-4 first:mt-0"}>
+            {/* Speaker header - only when speaker changes */}
+            {!isSameSpeaker && seg.speaker && color && (
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${color.dot} shrink-0`} />
+                <span className={`text-[11px] font-semibold uppercase tracking-wider ${color.text}`}>
+                  {seg.speaker}
+                </span>
+                {seg.timestamp != null && (
+                  <span className="text-[10px] text-mid-gray/40 tabular-nums">
+                    {formatTimestamp(seg.timestamp)}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Timestamp for same speaker continuation */}
+            {isSameSpeaker && seg.timestamp != null && (
+              <span className="text-[10px] text-mid-gray/30 tabular-nums mr-1.5">
+                {formatTimestamp(seg.timestamp)}
+              </span>
+            )}
+            {/* Text */}
+            <p className={`leading-relaxed text-[13px] ${seg.speaker ? "pl-[18px]" : ""}`}>
+              {seg.text}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Render markdown content (for LLM responses) */
+function MarkdownContent({ content }: { readonly content: string }): React.ReactElement {
+  return (
+    <div className="markdown-content">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+        // Custom styling for markdown elements
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-logo-primary hover:text-logo-primary/80 underline decoration-logo-primary/30 hover:decoration-logo-primary/60 transition-colors"
+          >
+            {children}
+          </a>
+        ),
+        code: ({ className, children }) => {
+          const isInline = !className;
+          if (isInline) {
+            return (
+              <code className="px-1.5 py-0.5 rounded bg-mid-gray/15 text-[12px] font-mono text-text/90">
+                {children}
+              </code>
+            );
+          }
+          return (
+            <code className={`${className} block p-3 rounded-lg bg-mid-gray/10 text-[12px] overflow-x-auto`}>
+              {children}
+            </code>
+          );
+        },
+        pre: ({ children }) => <pre className="mb-3 last:mb-0 overflow-hidden rounded-lg">{children}</pre>,
+        ul: ({ children }) => <ul className="mb-2 last:mb-0 pl-4 space-y-1 list-disc">{children}</ul>,
+        ol: ({ children }) => <ol className="mb-2 last:mb-0 pl-4 space-y-1 list-decimal">{children}</ol>,
+        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+        h1: ({ children }) => <h1 className="text-lg font-semibold mb-2 mt-3 first:mt-0">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-base font-semibold mb-2 mt-3 first:mt-0">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-sm font-semibold mb-1.5 mt-2 first:mt-0">{children}</h3>,
+        blockquote: ({ children }) => (
+          <blockquote className="border-l-2 border-mid-gray/30 pl-3 py-1 my-2 text-mid-gray/80 italic">
+            {children}
+          </blockquote>
+        ),
+        table: ({ children }) => (
+          <div className="overflow-x-auto my-2">
+            <table className="border-collapse border border-mid-gray/20 text-[12px]">{children}</table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="border border-mid-gray/20 px-2 py-1 bg-mid-gray/10 font-semibold text-left">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => <td className="border border-mid-gray/20 px-2 py-1">{children}</td>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 export const TranscriptionResultView: React.FC = () => {
@@ -93,6 +222,7 @@ export const TranscriptionResultView: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const recordingPathRef = useRef<string | null>(null);
   const isUserScrolledUpRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -103,7 +233,13 @@ export const TranscriptionResultView: React.FC = () => {
     if (!container) return;
     const { scrollTop, scrollHeight, clientHeight } = container;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    const isScrolledUp = distanceFromBottom > 50;
+    
+    // Detect scroll direction: if user is actively scrolling up, immediately mark as scrolled up
+    const isScrollingUp = scrollTop < lastScrollTopRef.current;
+    lastScrollTopRef.current = scrollTop;
+    
+    // Consider scrolled up if: 1) more than 150px from bottom OR 2) actively scrolling up
+    const isScrolledUp = distanceFromBottom > 150 || (isScrollingUp && distanceFromBottom > 10);
     isUserScrolledUpRef.current = isScrolledUp;
     setShowScrollButton(isScrolledUp);
   };
@@ -111,6 +247,12 @@ export const TranscriptionResultView: React.FC = () => {
   useEffect(() => {
     if (!isUserScrolledUpRef.current) {
       scrollToBottom();
+      // Update lastScrollTop after auto-scroll to prevent false detection
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          lastScrollTopRef.current = messagesContainerRef.current.scrollTop;
+        }
+      }, 100);
     }
   }, [messages]);
 
@@ -316,10 +458,19 @@ export const TranscriptionResultView: React.FC = () => {
     );
   };
 
-  /** Check if the first transcription message contains speaker markers */
+  /** Check if the first transcription message contains speaker markers (with or without timestamps) */
   const hasSpeakerLabels = useMemo(() => {
     if (messages.length === 0) return false;
-    return /\[Speaker \d+\]/.test(messages[0].content);
+    return /\[Speaker \d+(?:\|[\d.]+)?\]/.test(messages[0].content);
+  }, [messages]);
+
+  /** Count unique speakers in the transcription */
+  const speakerCount = useMemo(() => {
+    if (messages.length === 0) return 0;
+    const matches = messages[0].content.matchAll(/\[(Speaker \d+)(?:\|[\d.]+)?\]/g);
+    const unique = new Set<string>();
+    for (const m of matches) unique.add(m[1]);
+    return unique.size;
   }, [messages]);
 
   if (loading) {
@@ -353,10 +504,12 @@ export const TranscriptionResultView: React.FC = () => {
       {/* Header */}
       <div className="shrink-0 px-5 py-3.5 border-b border-mid-gray/10 bg-background/80 backdrop-blur-sm">
         <div className="flex items-center justify-between">
-          <h1 className="text-base font-semibold tracking-tight">Transcription</h1>
-          {hasSpeakerLabels && (
-            <span className="text-[10px] font-medium text-mid-gray/60 uppercase tracking-widest">
-              Diarized
+          <h1 className="text-base font-semibold tracking-tight">
+            {hasSpeakerLabels ? "Meeting Transcript" : "Transcription"}
+          </h1>
+          {hasSpeakerLabels && speakerCount > 0 && (
+            <span className="text-[10px] font-medium text-mid-gray/50 tabular-nums">
+              {speakerCount} {speakerCount === 1 ? "speaker" : "speakers"}
             </span>
           )}
         </div>
@@ -383,20 +536,31 @@ export const TranscriptionResultView: React.FC = () => {
               {/* Message bubble */}
               <div className="relative w-full rounded-xl bg-mid-gray/[0.06] border border-mid-gray/[0.08] px-4 py-3 text-[13px] group">
                 <div className={msg.name ? "pr-8" : ""}>
-                  {i === 0 && hasSpeakerLabels
-                    ? parseTranscriptionContent(msg.content)
-                    : (
-                      <div className="whitespace-pre-wrap break-words leading-relaxed">
-                        {msg.content || (msg.streaming && (
-                          <span className="inline-flex gap-1 text-mid-gray">
-                            <span className="animate-bounce" style={{ animationDelay: "0ms" }}>.</span>
-                            <span className="animate-bounce" style={{ animationDelay: "150ms" }}>.</span>
-                            <span className="animate-bounce" style={{ animationDelay: "300ms" }}>.</span>
-                          </span>
-                        ))}
-                      </div>
-                    )
-                  }
+                  {(() => {
+                    // First message with speaker labels - use meeting transcript renderer
+                    if (i === 0 && hasSpeakerLabels) {
+                      return renderMeetingTranscript(msg.content);
+                    }
+                    // First message without speaker labels - plain text (transcription)
+                    if (i === 0) {
+                      return <div className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</div>;
+                    }
+                    // LLM chat responses - use Markdown renderer
+                    if (msg.content) {
+                      return <MarkdownContent content={msg.content} />;
+                    }
+                    // Streaming indicator
+                    if (msg.streaming) {
+                      return (
+                        <span className="inline-flex gap-1 text-mid-gray">
+                          <span className="animate-bounce" style={{ animationDelay: "0ms" }}>.</span>
+                          <span className="animate-bounce" style={{ animationDelay: "150ms" }}>.</span>
+                          <span className="animate-bounce" style={{ animationDelay: "300ms" }}>.</span>
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
                 {msg.name && (
                   <button
@@ -430,6 +594,12 @@ export const TranscriptionResultView: React.FC = () => {
               isUserScrolledUpRef.current = false;
               setShowScrollButton(false);
               scrollToBottom();
+              // Update lastScrollTop to prevent false detection after programmatic scroll
+              setTimeout(() => {
+                if (messagesContainerRef.current) {
+                  lastScrollTopRef.current = messagesContainerRef.current.scrollTop;
+                }
+              }, 100);
             }}
             className="p-2 rounded-full bg-background border border-mid-gray/20 shadow-md hover:bg-mid-gray/5 transition-colors"
             title="Scroll to bottom"
