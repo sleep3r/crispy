@@ -46,7 +46,8 @@
     ],
     "macOS": {
       "entitlements": "Entitlements.plist",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "minimumSystemVersion": "12.3"
     },
     "icon": [
       "icons/32x32.png",
