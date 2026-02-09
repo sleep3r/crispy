@@ -44,7 +44,7 @@ interface DownloadStats {
 
 const NONE_OPTION: TranscriptionModelInfo = {
   id: "none",
-  name: "None",
+  name: "Select transcriptor",
   description: "Transcription disabled",
   size_mb: 0,
   is_downloaded: true,

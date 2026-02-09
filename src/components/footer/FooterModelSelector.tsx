@@ -41,7 +41,7 @@ const getDownloadLabel = (
 };
 
 const DEFAULT_NOISE_MODELS: NsModelInfo[] = [
-  { id: "dummy", name: "None", description: "No processing" },
+  { id: "dummy", name: "Select suppressor", description: "No processing" },
   { id: "noisy", name: "Test noise", description: "Adds test noise (debug)" },
   { id: "rnnnoise", name: "RNN Noise", description: "RNNoise denoiser (48 kHz)" },
 ];

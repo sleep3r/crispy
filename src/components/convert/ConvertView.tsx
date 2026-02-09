@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FileVideo, Upload, CheckCircle, XCircle, Loader2, Copy, Check, ExternalLink } from "lucide-react";
+import { FileVideo, Upload, CheckCircle, XCircle, Loader2, ExternalLink } from "lucide-react";
 import { useTauriListen } from "../../hooks/useTauriListen";
 
 interface ConversionJob {
@@ -15,18 +15,7 @@ export const ConvertView: React.FC = () => {
   const [jobs, setJobs] = useState<ConversionJob[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [ffmpegAvailable, setFfmpegAvailable] = useState<boolean | null>(null);
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const recentDropsRef = useRef<Map<string, number>>(new Map());
-
-  const copyToClipboard = async (text: string, id: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedCommand(id);
-      setTimeout(() => setCopiedCommand(null), 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  };
 
   const checkFFmpeg = async () => {
     try {
@@ -167,127 +156,28 @@ export const ConvertView: React.FC = () => {
         </p>
       </div>
 
-      {/* FFmpeg Installation Guide */}
+      {/* FFmpeg Not Installed */}
       {ffmpegAvailable === false && (
-        <div className="px-4 py-4 rounded-lg border border-blue-500/30 bg-blue-500/10 text-sm space-y-3">
-          <div>
-            <div className="font-semibold text-blue-800 mb-1">FFmpeg Required</div>
-            <p className="text-blue-700/90 text-xs">
-              FFmpeg is required to convert audio and video files. Follow the instructions below for your platform.
-            </p>
-          </div>
-
-          {/* macOS Instructions */}
-          <div className="space-y-2 pt-2 border-t border-blue-500/20">
-            <p className="font-medium text-blue-800 text-xs">macOS Installation (Recommended):</p>
-            <div className="space-y-2">
-              <div className="bg-blue-700/10 rounded-md p-2 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <code className="text-[11px] font-mono text-blue-900 flex-1 break-all">
-                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard('/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"', 'brew-install')}
-                    className="shrink-0 p-1 text-blue-700 hover:text-blue-800 hover:bg-blue-700/10 rounded transition-colors"
-                    title="Copy command"
-                  >
-                    {copiedCommand === 'brew-install' ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
-                </div>
-                <p className="text-[10px] text-blue-700/70">1. Install Homebrew (if not installed)</p>
-              </div>
-              <div className="bg-blue-700/10 rounded-md p-2 space-y-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <code className="text-[11px] font-mono text-blue-900">brew install ffmpeg</code>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard('brew install ffmpeg', 'brew-ffmpeg')}
-                    className="shrink-0 p-1 text-blue-700 hover:text-blue-800 hover:bg-blue-700/10 rounded transition-colors"
-                    title="Copy command"
-                  >
-                    {copiedCommand === 'brew-ffmpeg' ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
-                </div>
-                <p className="text-[10px] text-blue-700/70">2. Install FFmpeg via Homebrew</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Linux Instructions */}
-          <div className="space-y-2 pt-2 border-t border-blue-500/20">
-            <p className="font-medium text-blue-800 text-xs">Linux Installation:</p>
-            <div className="space-y-1.5">
-              <div className="bg-blue-700/10 rounded-md p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex-1">
-                    <span className="text-[10px] text-blue-700/70 block mb-1">Ubuntu/Debian:</span>
-                    <code className="text-[11px] font-mono text-blue-900">sudo apt update && sudo apt install ffmpeg</code>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard('sudo apt update && sudo apt install ffmpeg', 'apt-ffmpeg')}
-                    className="shrink-0 p-1 text-blue-700 hover:text-blue-800 hover:bg-blue-700/10 rounded transition-colors"
-                    title="Copy command"
-                  >
-                    {copiedCommand === 'apt-ffmpeg' ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
-                </div>
-              </div>
-              <div className="bg-blue-700/10 rounded-md p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex-1">
-                    <span className="text-[10px] text-blue-700/70 block mb-1">Fedora:</span>
-                    <code className="text-[11px] font-mono text-blue-900">sudo dnf install ffmpeg</code>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard('sudo dnf install ffmpeg', 'dnf-ffmpeg')}
-                    className="shrink-0 p-1 text-blue-700 hover:text-blue-800 hover:bg-blue-700/10 rounded transition-colors"
-                    title="Copy command"
-                  >
-                    {copiedCommand === 'dnf-ffmpeg' ? <Check size={14} /> : <Copy size={14} />}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Windows Instructions */}
-          <div className="space-y-2 pt-2 border-t border-blue-500/20">
-            <p className="font-medium text-blue-800 text-xs">Windows Installation:</p>
-            <div className="bg-blue-700/10 rounded-md p-2 space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <code className="text-[11px] font-mono text-blue-900">winget install ffmpeg</code>
-                <button
-                  type="button"
-                  onClick={() => copyToClipboard('winget install ffmpeg', 'winget-ffmpeg')}
-                  className="shrink-0 p-1 text-blue-700 hover:text-blue-800 hover:bg-blue-700/10 rounded transition-colors"
-                  title="Copy command"
-                >
-                  {copiedCommand === 'winget-ffmpeg' ? <Check size={14} /> : <Copy size={14} />}
-                </button>
-              </div>
-              <p className="text-[10px] text-blue-700/70">Press Win+R, type "cmd", paste this command</p>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-3 pt-2 border-t border-blue-500/20">
+        <div className="px-4 py-3 rounded-lg border border-blue-500/30 bg-blue-500/10 text-sm">
+          <div className="font-medium text-blue-800 mb-2">FFmpeg Required</div>
+          <p className="text-blue-700/90 text-xs mb-3">
+            FFmpeg is required to convert audio and video files.
+          </p>
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={handleOpenFfmpegGuide}
-              className="flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-800 font-medium transition-colors"
+              className="flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-800 font-medium underline transition-colors"
             >
               <ExternalLink size={12} />
-              <span>Detailed Installation Guide</span>
+              <span>Installation instructions for all platforms</span>
             </button>
             <button
               type="button"
               onClick={checkFFmpeg}
               className="text-xs text-blue-700/60 hover:text-blue-700 font-medium transition-colors"
             >
-              Recheck Installation
+              Recheck
             </button>
           </div>
         </div>

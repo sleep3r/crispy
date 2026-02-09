@@ -16,7 +16,7 @@ pub fn get_available_ns_models() -> Vec<NsModelInfo> {
     vec![
         NsModelInfo {
             id: "dummy".to_string(),
-            name: "None".to_string(),
+            name: "Select suppressor".to_string(),
             description: "No processing".to_string(),
         },
         NsModelInfo {
