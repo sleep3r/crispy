@@ -127,6 +127,10 @@ impl WavWriter {
         
         Ok(self.output_path)
     }
+
+    pub fn output_path(&self) -> &PathBuf {
+        &self.output_path
+    }
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

@@ -105,9 +105,14 @@ export const MicrophoneVolume: React.FC = () => {
 
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
-      invoke("stop_monitoring").catch(console.error);
     };
   }, [selectedMicrophone, selectedOutputDevice, systemVolumeState, volume, selectedModel]);
+
+  // Keep monitoring alive across navigation; only stop when no microphone is selected.
+  useEffect(() => {
+    if (selectedMicrophone) return;
+    invoke("stop_monitoring").catch(console.error);
+  }, [selectedMicrophone]);
 
   useEffect(() => {
     if (!selectedMicrophone || systemVolumeState === "ready") return;

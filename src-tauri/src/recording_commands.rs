@@ -414,12 +414,24 @@ pub struct RecordingFile {
 }
 
 #[tauri::command]
-pub fn get_recordings(app: AppHandle) -> Result<Vec<RecordingFile>, String> {
+pub fn get_recordings(
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<Vec<RecordingFile>, String> {
     let recordings_dir = recordings_dir(&app)?;
 
     if !recordings_dir.exists() {
         return Ok(Vec::new());
     }
+
+    // Hide currently active recording file from history until it's finalized.
+    let active_recording_path: Option<String> = {
+        let recording = state.recording.lock().unwrap();
+        let writer_guard = recording.writer.lock().unwrap();
+        writer_guard
+            .as_ref()
+            .map(|w| w.output_path().to_string_lossy().to_string())
+    };
 
     let mut recordings = Vec::new();
     let entries = std::fs::read_dir(&recordings_dir)
@@ -430,6 +442,11 @@ pub fn get_recordings(app: AppHandle) -> Result<Vec<RecordingFile>, String> {
         let path = entry.path();
 
         if path.extension().and_then(|s| s.to_str()) == Some("wav") {
+            let path_str = path.to_string_lossy().to_string();
+            if active_recording_path.as_ref().is_some_and(|active| active == &path_str) {
+                continue;
+            }
+
             let metadata = std::fs::metadata(&path)
                 .map_err(|e| format!("Failed to get file metadata: {}", e))?;
 
