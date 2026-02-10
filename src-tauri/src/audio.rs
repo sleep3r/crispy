@@ -26,6 +26,8 @@ pub struct AudioMonitorState {
     shared: Option<Arc<Mutex<NsState>>>,
     pub last_input_rate: Option<f32>,
     pub last_output_rate: Option<f32>,
+    pub current_input_device: Option<String>,
+    pub current_output_device: Option<String>,
 }
 
 impl AudioMonitorState {
@@ -36,6 +38,8 @@ impl AudioMonitorState {
             shared: None,
             last_input_rate: None,
             last_output_rate: None,
+            current_input_device: None,
+            current_output_device: None,
         }
     }
 }
@@ -449,9 +453,19 @@ pub fn start_monitoring(
 
     {
         let mut mon = audio.lock().unwrap();
+        // If monitoring is already active for the same devices, keep streams alive.
+        // Model/volume changes are handled by set_monitoring_model/set_monitoring_volume.
+        let same_input = mon.current_input_device.as_deref() == Some(device_name.as_str());
+        let same_output = mon.current_output_device.as_deref() == Some(output_device_name.as_str());
+        if mon.input_stream.is_some() && same_input && same_output {
+            return Ok(());
+        }
+
         mon.input_stream = None;
         mon.output_stream = None;
         mon.shared = None;
+        mon.current_input_device = None;
+        mon.current_output_device = None;
     }
 
     let host = cpal::default_host();
@@ -659,6 +673,8 @@ pub fn start_monitoring(
     mon.shared = shared.clone();
     mon.last_input_rate = Some(config.sample_rate() as f32);
     mon.last_output_rate = output_config.as_ref().map(|c| c.sample_rate() as f32);
+    mon.current_input_device = Some(device_name);
+    mon.current_output_device = Some(output_device_name);
 
     Ok(())
 }
@@ -909,6 +925,8 @@ pub fn stop_monitoring(audio: Arc<Mutex<AudioMonitorState>>) -> Result<(), Strin
     mon.input_stream = None;
     mon.output_stream = None;
     mon.shared = None;
+    mon.current_input_device = None;
+    mon.current_output_device = None;
     Ok(())
 }
 

@@ -50,7 +50,7 @@ export const RecordingControls: React.FC = () => {
   return (
     <SettingContainer
       title="Recording"
-      description="Record processed mic + app audio to MP3."
+      description="Record processed mic + app audio to WAV."
       grouped
       layout="stacked"
     >
@@ -86,11 +86,8 @@ export const RecordingControls: React.FC = () => {
           )}
         </div>
 
-        <div className="flex flex-col gap-1 text-xs text-mid-gray">
-          <div>Recordings are saved to: ~/Documents/Crispy/Recordings/</div>
-          <div>
-            Records to WAV format. Mic + app audio mixed to stereo (dual-mono).
-          </div>
+        <div className="text-xs text-mid-gray">
+          Recordings are saved to: ~/Documents/Crispy/Recordings/
         </div>
       </div>
     </SettingContainer>

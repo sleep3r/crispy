@@ -62,7 +62,7 @@ export const MicrophoneVolume: React.FC = () => {
     lastLevel.current = lastLevel.current * 0.7 + visual * 0.3;
   });
 
-  // Start/stop monitoring when microphone changes
+  // Start monitoring when selected devices change.
   useEffect(() => {
     if (!selectedMicrophone) {
       lastLevel.current = 0;
@@ -106,7 +106,7 @@ export const MicrophoneVolume: React.FC = () => {
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
     };
-  }, [selectedMicrophone, selectedOutputDevice, systemVolumeState, volume, selectedModel]);
+  }, [selectedMicrophone, selectedOutputDevice]);
 
   // Keep monitoring alive across navigation; only stop when no microphone is selected.
   useEffect(() => {
@@ -115,8 +115,9 @@ export const MicrophoneVolume: React.FC = () => {
   }, [selectedMicrophone]);
 
   useEffect(() => {
-    if (!selectedMicrophone || systemVolumeState === "ready") return;
-    invoke("set_monitoring_volume", { volume: volume / 100 }).catch(
+    if (!selectedMicrophone) return;
+    const effectiveVolume = systemVolumeState === "ready" ? 1 : volume / 100;
+    invoke("set_monitoring_volume", { volume: effectiveVolume }).catch(
       console.error,
     );
   }, [selectedMicrophone, volume, systemVolumeState]);
