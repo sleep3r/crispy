@@ -161,6 +161,8 @@ fn start_recording_worker(
 
     thread::spawn(move || {
         let frame_size = 1152;
+        // Keep streams roughly aligned within ~50ms to reduce lip-sync drift.
+        let max_desync_samples = (recording::SAMPLE_RATE / 20).max(frame_size); // 50 ms @ 48kHz
         let mut left_frame = vec![0.0f32; frame_size];
         let mut right_frame = vec![0.0f32; frame_size];
         let mut frames_encoded = 0;
@@ -181,6 +183,26 @@ fn start_recording_worker(
             if mic_available < frame_size {
                 thread::sleep(Duration::from_millis(10));
                 continue;
+            }
+
+            // Align buffer heads if one source gets significantly ahead.
+            {
+                let mut mic_buf = mic_buffer.lock().unwrap();
+                let mut app_buf = app_buffer.lock().unwrap();
+                let mic_len = mic_buf.len();
+                let app_len = app_buf.len();
+
+                if mic_len > app_len + max_desync_samples {
+                    let trim = mic_len - app_len - max_desync_samples;
+                    for _ in 0..trim {
+                        let _ = mic_buf.pop_front();
+                    }
+                } else if app_len > mic_len + max_desync_samples {
+                    let trim = app_len - mic_len - max_desync_samples;
+                    for _ in 0..trim {
+                        let _ = app_buf.pop_front();
+                    }
+                }
             }
 
             {
