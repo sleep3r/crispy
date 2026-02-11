@@ -2,15 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useSettings } from "./useSettings";
 import { useTauriListen } from "./useTauriListen";
+import { sortModels, type TranscriptionModelInfo } from "@/lib/utils/models";
 
-export interface TranscriptionModelInfo {
-  id: string;
-  name: string;
-  description: string;
-  size_mb: number;
-  is_downloaded: boolean;
-  is_downloading: boolean;
-}
+export type { TranscriptionModelInfo } from "@/lib/utils/models";
 
 export interface DownloadProgressPayload {
   model_id: string;
@@ -49,28 +43,6 @@ const NONE_OPTION: TranscriptionModelInfo = {
   size_mb: 0,
   is_downloaded: true,
   is_downloading: false,
-};
-
-const MODEL_ORDER = [
-  "parakeet-tdt-0.6b-v3",
-  "parakeet-tdt-0.6b-v2",
-  "moonshine-base",
-  "small",
-  "medium",
-  "turbo",
-  "large",
-];
-
-const sortModels = (list: TranscriptionModelInfo[]) => {
-  const orderIndex = new Map(MODEL_ORDER.map((id, i) => [id, i]));
-  return [...list].sort((a, b) => {
-    const ai = orderIndex.get(a.id);
-    const bi = orderIndex.get(b.id);
-    if (ai !== undefined && bi !== undefined) return ai - bi;
-    if (ai !== undefined) return -1;
-    if (bi !== undefined) return 1;
-    return a.name.localeCompare(b.name);
-  });
 };
 
 export function useTranscriptionModels() {

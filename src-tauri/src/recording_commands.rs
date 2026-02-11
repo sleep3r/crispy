@@ -572,3 +572,178 @@ pub fn read_recording_file(path: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read recording: {}", e))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Build a minimal valid WAV file in memory and write it to a temp file.
+    fn write_test_wav(
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
+        bits_per_sample: u16,
+        num_samples_per_channel: u32,
+    ) {
+        let bytes_per_sample = (bits_per_sample / 8) as u32;
+        let data_size = num_samples_per_channel * channels as u32 * bytes_per_sample;
+        let fmt_chunk_size: u32 = 16;
+        // RIFF header (12) + fmt chunk (8 + 16) + data chunk header (8) + data
+        let file_size = 4 + (8 + fmt_chunk_size) + 8 + data_size;
+
+        let mut buf = Vec::new();
+        // RIFF header
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&file_size.to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        // fmt chunk
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&fmt_chunk_size.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes()); // PCM format
+        buf.extend_from_slice(&channels.to_le_bytes());
+        buf.extend_from_slice(&sample_rate.to_le_bytes());
+        let byte_rate = sample_rate * channels as u32 * bytes_per_sample;
+        buf.extend_from_slice(&byte_rate.to_le_bytes());
+        let block_align = channels * (bits_per_sample / 8);
+        buf.extend_from_slice(&block_align.to_le_bytes());
+        buf.extend_from_slice(&bits_per_sample.to_le_bytes());
+        // data chunk
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data_size.to_le_bytes());
+        // Write silence (zeros)
+        buf.extend(vec![0u8; data_size as usize]);
+
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(&buf).unwrap();
+    }
+
+    #[test]
+    fn wav_duration_48khz_stereo_16bit() {
+        let dir = std::env::temp_dir().join("crispy_test_wav_48k");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_48k.wav");
+
+        // 48000 samples/channel = exactly 1 second at 48kHz
+        write_test_wav(&path, 48000, 2, 16, 48000);
+        let duration = get_wav_duration(&path).unwrap();
+        assert!((duration - 1.0).abs() < 0.001, "Expected ~1.0s, got {}", duration);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_duration_44100hz_mono_16bit() {
+        let dir = std::env::temp_dir().join("crispy_test_wav_44k");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_44k.wav");
+
+        // 44100 samples = exactly 1 second at 44.1kHz
+        write_test_wav(&path, 44100, 1, 16, 44100);
+        let duration = get_wav_duration(&path).unwrap();
+        assert!((duration - 1.0).abs() < 0.001, "Expected ~1.0s, got {}", duration);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_duration_5_seconds() {
+        let dir = std::env::temp_dir().join("crispy_test_wav_5s");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_5s.wav");
+
+        write_test_wav(&path, 48000, 2, 16, 48000 * 5);
+        let duration = get_wav_duration(&path).unwrap();
+        assert!((duration - 5.0).abs() < 0.001, "Expected ~5.0s, got {}", duration);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_duration_returns_none_for_non_wav_file() {
+        let dir = std::env::temp_dir().join("crispy_test_wav_bad");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("not_a_wav.wav");
+        std::fs::write(&path, b"this is not a wav file").unwrap();
+
+        assert!(get_wav_duration(&path).is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_duration_returns_none_for_missing_file() {
+        let path = std::env::temp_dir().join("crispy_nonexistent.wav");
+        assert!(get_wav_duration(&path).is_none());
+    }
+
+    #[test]
+    fn wav_duration_with_extra_chunks() {
+        let dir = std::env::temp_dir().join("crispy_test_wav_chunks");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_extra_chunks.wav");
+
+        // Build WAV with a LIST chunk before the data chunk
+        let sample_rate: u32 = 48000;
+        let channels: u16 = 2;
+        let bits_per_sample: u16 = 16;
+        let num_samples: u32 = 48000; // 1 second
+        let bytes_per_sample = (bits_per_sample / 8) as u32;
+        let data_size = num_samples * channels as u32 * bytes_per_sample;
+
+        let list_content = b"INFOIART\x05\x00\x00\x00Test\x00"; // fake LIST chunk
+        let list_chunk_size = list_content.len() as u32;
+
+        let fmt_chunk_size: u32 = 16;
+        let file_size = 4 + (8 + fmt_chunk_size) + (8 + list_chunk_size) + 8 + data_size;
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&file_size.to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        // fmt chunk
+        buf.extend_from_slice(b"fmt ");
+        buf.extend_from_slice(&fmt_chunk_size.to_le_bytes());
+        buf.extend_from_slice(&1u16.to_le_bytes());
+        buf.extend_from_slice(&channels.to_le_bytes());
+        buf.extend_from_slice(&sample_rate.to_le_bytes());
+        let byte_rate = sample_rate * channels as u32 * bytes_per_sample;
+        buf.extend_from_slice(&byte_rate.to_le_bytes());
+        let block_align = channels * (bits_per_sample / 8);
+        buf.extend_from_slice(&block_align.to_le_bytes());
+        buf.extend_from_slice(&bits_per_sample.to_le_bytes());
+        // LIST chunk (extra chunk before data)
+        buf.extend_from_slice(b"LIST");
+        buf.extend_from_slice(&list_chunk_size.to_le_bytes());
+        buf.extend_from_slice(list_content);
+        // data chunk
+        buf.extend_from_slice(b"data");
+        buf.extend_from_slice(&data_size.to_le_bytes());
+        buf.extend(vec![0u8; data_size as usize]);
+
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(&buf).unwrap();
+
+        let duration = get_wav_duration(&path).unwrap();
+        assert!((duration - 1.0).abs() < 0.001, "Expected ~1.0s, got {}", duration);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_duration_returns_none_for_truncated_header() {
+        let dir = std::env::temp_dir().join("crispy_test_wav_trunc");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("truncated.wav");
+        // Only write RIFF header, no fmt or data chunks
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"RIFF");
+        buf.extend_from_slice(&100u32.to_le_bytes());
+        buf.extend_from_slice(b"WAVE");
+        std::fs::write(&path, &buf).unwrap();
+
+        assert!(get_wav_duration(&path).is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

@@ -207,3 +207,138 @@ pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<(
     }
     save_app_settings(app, &settings)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn llm_settings_default_values() {
+        let settings = LlmSettings::default();
+        assert_eq!(settings.endpoint, "https://api.openai.com/v1");
+        assert!(settings.api_key.is_empty());
+        assert_eq!(settings.model, "gpt-4");
+    }
+
+    #[test]
+    fn app_settings_default_values() {
+        let settings = AppSettings::default();
+        assert!(settings.selected_microphone.is_empty());
+        assert!(settings.selected_output_device.is_empty());
+        assert_eq!(settings.microphone_volume, "100");
+        assert_eq!(settings.selected_model, "dummy");
+        assert_eq!(settings.selected_transcription_model, "none");
+        assert_eq!(settings.selected_recording_app, "none");
+        assert_eq!(settings.autostart_enabled, "false");
+        assert_eq!(settings.diarization_enabled, "false");
+        assert_eq!(settings.diarization_max_speakers, "3");
+        assert_eq!(settings.diarization_threshold, "0.30");
+        assert_eq!(settings.diarization_merge_gap, "2.5");
+    }
+
+    #[test]
+    fn settings_file_default_values() {
+        let settings = SettingsFile::default();
+        assert_eq!(settings.llm.endpoint, "https://api.openai.com/v1");
+        assert_eq!(settings.app.selected_model, "dummy");
+    }
+
+    #[test]
+    fn llm_settings_serialization_roundtrip() {
+        let settings = LlmSettings {
+            endpoint: "https://custom.api.com".to_string(),
+            api_key: "sk-test-key".to_string(),
+            model: "gpt-4o".to_string(),
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: LlmSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.endpoint, settings.endpoint);
+        assert_eq!(deserialized.api_key, settings.api_key);
+        assert_eq!(deserialized.model, settings.model);
+    }
+
+    #[test]
+    fn app_settings_serialization_roundtrip() {
+        let mut settings = AppSettings::default();
+        settings.selected_microphone = "mic-1".to_string();
+        settings.microphone_volume = "75".to_string();
+        settings.diarization_enabled = "true".to_string();
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.selected_microphone, "mic-1");
+        assert_eq!(deserialized.microphone_volume, "75");
+        assert_eq!(deserialized.diarization_enabled, "true");
+    }
+
+    #[test]
+    fn settings_file_full_roundtrip() {
+        let settings = SettingsFile {
+            llm: LlmSettings {
+                endpoint: "https://api.example.com".to_string(),
+                api_key: "key123".to_string(),
+                model: "claude".to_string(),
+            },
+            app: AppSettings {
+                selected_microphone: "mic-2".to_string(),
+                diarization_max_speakers: "5".to_string(),
+                ..AppSettings::default()
+            },
+        };
+
+        let json = serde_json::to_string_pretty(&settings).unwrap();
+        let deserialized: SettingsFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.llm.model, "claude");
+        assert_eq!(deserialized.app.selected_microphone, "mic-2");
+        assert_eq!(deserialized.app.diarization_max_speakers, "5");
+        // Verify defaults are preserved for unset fields
+        assert_eq!(deserialized.app.microphone_volume, "100");
+    }
+
+    #[test]
+    fn app_settings_deserializes_with_missing_diarization_fields() {
+        // Simulates loading a settings file from before diarization was added
+        let json = r#"{
+            "selected_microphone": "test-mic",
+            "selected_output_device": "",
+            "microphone_volume": "80",
+            "selected_model": "rnnoise",
+            "selected_transcription_model": "small",
+            "selected_recording_app": "none"
+        }"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.selected_microphone, "test-mic");
+        assert_eq!(settings.microphone_volume, "80");
+        // Missing fields should get defaults
+        assert_eq!(settings.autostart_enabled, "false");
+        assert_eq!(settings.diarization_enabled, "false");
+        assert_eq!(settings.diarization_max_speakers, "3");
+        assert_eq!(settings.diarization_threshold, "0.30");
+        assert_eq!(settings.diarization_merge_gap, "2.5");
+    }
+
+    #[test]
+    fn llm_settings_public_omits_api_key() {
+        let public_settings = LlmSettingsPublic {
+            endpoint: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4".to_string(),
+        };
+        let json = serde_json::to_string(&public_settings).unwrap();
+        assert!(!json.contains("api_key"));
+        assert!(json.contains("endpoint"));
+        assert!(json.contains("model"));
+    }
+
+    #[test]
+    fn settings_file_deserializes_from_llm_only_json() {
+        let json = r#"{
+            "endpoint": "https://api.openai.com/v1",
+            "api_key": "sk-test",
+            "model": "gpt-4"
+        }"#;
+        // This is the legacy format where only LLM settings were saved
+        let llm: LlmSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(llm.endpoint, "https://api.openai.com/v1");
+        assert_eq!(llm.api_key, "sk-test");
+    }
+}

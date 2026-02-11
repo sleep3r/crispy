@@ -402,3 +402,157 @@ pub fn start_app_audio_capture(
 }
 
 // Non-macOS (and macOS x86) stub defined above.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wav_writer_creates_file() {
+        let dir = std::env::temp_dir().join("crispy_test_wavwriter_create");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_create.wav");
+
+        let writer = WavWriter::new(path.clone()).unwrap();
+        assert_eq!(writer.output_path(), &path);
+        let finalized_path = writer.finalize().unwrap();
+        assert_eq!(finalized_path, path);
+        assert!(path.exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_writer_writes_silence() {
+        let dir = std::env::temp_dir().join("crispy_test_wavwriter_silence");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_silence.wav");
+
+        let mut writer = WavWriter::new(path.clone()).unwrap();
+        let left = vec![0.0f32; 48000];
+        let right = vec![0.0f32; 48000];
+        writer.write_samples(&left, &right).unwrap();
+        writer.finalize().unwrap();
+
+        // Verify the file is a valid WAV we can read back
+        let reader = hound::WavReader::open(&path).unwrap();
+        let spec = reader.spec();
+        assert_eq!(spec.channels, CHANNELS as u16);
+        assert_eq!(spec.sample_rate, SAMPLE_RATE as u32);
+        assert_eq!(spec.bits_per_sample, 16);
+        assert_eq!(spec.sample_format, hound::SampleFormat::Int);
+
+        // 48000 samples * 2 channels = 96000 total samples
+        let samples: Vec<i16> = reader.into_samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(samples.len(), 48000 * 2);
+        // All silence
+        assert!(samples.iter().all(|&s| s == 0));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_writer_writes_audio_data() {
+        let dir = std::env::temp_dir().join("crispy_test_wavwriter_data");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_data.wav");
+
+        let mut writer = WavWriter::new(path.clone()).unwrap();
+        // Write a simple tone: +0.5 left, -0.5 right
+        let left = vec![0.5f32; 100];
+        let right = vec![-0.5f32; 100];
+        writer.write_samples(&left, &right).unwrap();
+        writer.finalize().unwrap();
+
+        let reader = hound::WavReader::open(&path).unwrap();
+        let samples: Vec<i16> = reader.into_samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(samples.len(), 200); // 100 * 2 channels
+
+        // Check interleaved: left, right, left, right...
+        let expected_left = (0.5f32 * 32767.0) as i16;
+        let expected_right = (-0.5f32 * 32767.0) as i16;
+        for i in 0..100 {
+            assert_eq!(samples[i * 2], expected_left);
+            assert_eq!(samples[i * 2 + 1], expected_right);
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_writer_clamps_samples() {
+        let dir = std::env::temp_dir().join("crispy_test_wavwriter_clamp");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_clamp.wav");
+
+        let mut writer = WavWriter::new(path.clone()).unwrap();
+        // Values outside -1.0..1.0 should be clamped
+        let left = vec![2.0f32, -3.0f32];
+        let right = vec![1.5f32, -1.5f32];
+        writer.write_samples(&left, &right).unwrap();
+        writer.finalize().unwrap();
+
+        let reader = hound::WavReader::open(&path).unwrap();
+        let samples: Vec<i16> = reader.into_samples::<i16>().map(|s| s.unwrap()).collect();
+        // All should be clamped to i16 max/min
+        assert_eq!(samples[0], 32767);  // 2.0 clamped to 1.0
+        assert_eq!(samples[1], 32767);  // 1.5 clamped to 1.0
+        assert_eq!(samples[2], -32767); // -3.0 clamped to -1.0
+        assert_eq!(samples[3], -32767); // -1.5 clamped to -1.0
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_writer_rejects_mismatched_channels() {
+        let dir = std::env::temp_dir().join("crispy_test_wavwriter_mismatch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_mismatch.wav");
+
+        let mut writer = WavWriter::new(path.clone()).unwrap();
+        let left = vec![0.0f32; 100];
+        let right = vec![0.0f32; 50]; // different length
+        let result = writer.write_samples(&left, &right);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("mismatch"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wav_writer_multiple_writes() {
+        let dir = std::env::temp_dir().join("crispy_test_wavwriter_multi");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_multi.wav");
+
+        let mut writer = WavWriter::new(path.clone()).unwrap();
+        // Write 3 batches of 100 samples each
+        for _ in 0..3 {
+            let left = vec![0.25f32; 100];
+            let right = vec![-0.25f32; 100];
+            writer.write_samples(&left, &right).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        let reader = hound::WavReader::open(&path).unwrap();
+        let samples: Vec<i16> = reader.into_samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(samples.len(), 600); // 300 * 2 channels
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn recording_constants() {
+        assert_eq!(SAMPLE_RATE, 48000);
+        assert_eq!(CHANNELS, 2);
+    }
+
+    #[test]
+    fn recording_state_initializes_with_empty_buffers() {
+        let state = RecordingState::new();
+        assert!(state.writer.lock().unwrap().is_none());
+        assert!(state.mic_buffer.lock().unwrap().is_empty());
+        assert!(state.app_buffer.lock().unwrap().is_empty());
+        assert!(state.worker.is_none());
+    }
+}

@@ -72,13 +72,18 @@ lint: ## Run linters
 	@echo "$(BLUE)Linting Rust...$(NC)"
 	cd src-tauri && cargo clippy || echo "$(YELLOW)⚠️  Clippy not installed$(NC)"
 
-test: ## Run tests (if available)
-	@echo "$(BLUE)Running tests...$(NC)"
-	@if [ -f "package.json" ] && grep -q '"test"' package.json; then \
-		npm test; \
-	else \
-		echo "$(YELLOW)⚠️  Tests not configured$(NC)"; \
-	fi
+test: ## Run all tests (frontend + backend)
+	@echo "$(BLUE)Running frontend tests...$(NC)"
+	npm test
+	@echo "$(BLUE)Running Rust tests...$(NC)"
+	cd src-tauri && cargo test
+	@echo "$(GREEN)All tests passed$(NC)"
+
+test-frontend: ## Run frontend tests only
+	npm test
+
+test-backend: ## Run Rust tests only
+	cd src-tauri && cargo test
 
 update: ## Update dependencies
 	@echo "$(BLUE)Updating Node.js dependencies...$(NC)"
