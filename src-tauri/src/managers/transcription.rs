@@ -5,7 +5,8 @@ use anyhow::Result;
 use log::{debug, info};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 use transcribe_rs::{
     engines::{
@@ -28,7 +29,8 @@ pub struct TranscriptionManager {
     engine: Mutex<Option<LoadedEngine>>,
     current_model_id: Mutex<Option<String>>,
     state: Mutex<HashMap<String, TranscriptionState>>,
-    model_manager: std::sync::Arc<ModelManager>,
+    cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    model_manager: Arc<ModelManager>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -40,11 +42,12 @@ pub struct TranscriptionState {
 }
 
 impl TranscriptionManager {
-    pub fn new(model_manager: std::sync::Arc<ModelManager>) -> Self {
+    pub fn new(model_manager: Arc<ModelManager>) -> Self {
         Self {
             engine: Mutex::new(None),
             current_model_id: Mutex::new(None),
             state: Mutex::new(HashMap::new()),
+            cancel_flags: Mutex::new(HashMap::new()),
             model_manager,
         }
     }
@@ -62,6 +65,32 @@ impl TranscriptionManager {
 
     pub fn get_state(&self, recording_path: &str) -> Option<TranscriptionState> {
         self.state.lock().unwrap().get(recording_path).cloned()
+    }
+
+    pub fn create_cancel_flag(&self, recording_path: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        self.cancel_flags
+            .lock()
+            .unwrap()
+            .insert(recording_path.to_string(), flag.clone());
+        flag
+    }
+
+    pub fn cancel(&self, recording_path: &str) -> bool {
+        if let Some(flag) = self.cancel_flags.lock().unwrap().get(recording_path) {
+            flag.store(true, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn remove_cancel_flag(&self, recording_path: &str) {
+        self.cancel_flags.lock().unwrap().remove(recording_path);
+    }
+
+    pub fn get_all_states(&self) -> HashMap<String, TranscriptionState> {
+        self.state.lock().unwrap().clone()
     }
 
     pub fn load_model(&self, model_id: &str) -> Result<()> {

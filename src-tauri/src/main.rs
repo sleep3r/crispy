@@ -426,6 +426,8 @@ fn main() {
             commands::transcription::stream_transcription_chat,
             commands::transcription::get_transcription_chat_history,
             commands::transcription::set_transcription_chat_history,
+            commands::transcription::cancel_transcription,
+            commands::transcription::get_all_transcription_states,
             commands::settings::get_app_settings,
             commands::settings::set_app_setting,
             commands::settings::set_autostart,

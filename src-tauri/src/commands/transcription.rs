@@ -20,6 +20,7 @@ use hound::WavReader;
 use rubato::{FftFixedIn, Resampler};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use std::time::Instant;
@@ -78,11 +79,19 @@ pub async fn start_transcription(
     let path_clone = recording_path.clone();
     let tm = Arc::clone(transcription_manager.inner());
     let sel = selected_model_state.0.clone();
+    let cancel_flag = tm.create_cancel_flag(&recording_path);
 
     std::thread::spawn(move || {
-        let result = run_transcription(&app_clone, &path_clone, &tm, &sel);
+        let result = run_transcription(&app_clone, &path_clone, &tm, &sel, &cancel_flag);
+        tm.remove_cancel_flag(&path_clone);
         let (status, err) = match result {
-            Ok(()) => ("completed".to_string(), None),
+            Ok(()) => {
+                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    ("cancelled".to_string(), None)
+                } else {
+                    ("completed".to_string(), None)
+                }
+            }
             Err(e) => ("error".to_string(), Some(e.to_string())),
         };
         tm.set_state(
@@ -112,6 +121,7 @@ fn run_transcription(
     recording_path: &str,
     tm: &TranscriptionManager,
     selected_model: &Arc<std::sync::Mutex<String>>,
+    cancel_flag: &AtomicBool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     eprintln!("[transcription] run_transcription called for: {}", recording_path);
     let model_id = {
@@ -249,6 +259,9 @@ fn run_transcription(
 
     let mut process_pending = |pending_16k: &mut Vec<f32>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         while pending_16k.len() >= transcribe_chunk_samples {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             let chunk: Vec<f32> = pending_16k.drain(..transcribe_chunk_samples).collect();
             if diarization_enabled {
                 all_audio_16k.extend_from_slice(&chunk);
@@ -343,6 +356,10 @@ fn run_transcription(
         process_pending(&mut pending_16k)?;
     }
 
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+
     if !pending_16k.is_empty() {
         if !transcription_started {
             let _ = app.emit(
@@ -369,6 +386,10 @@ fn run_transcription(
             1.0
         };
         emit_progress(app, tm, recording_path, progress, Some(0));
+    }
+
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Ok(());
     }
 
     // Run diarization if enabled
@@ -496,6 +517,42 @@ pub async fn has_transcription_result(
     let path = crate::managers::transcription::transcription_result_path(&app, &recording_path)
         .map_err(|e| e.to_string())?;
     Ok(path.exists())
+}
+
+#[tauri::command]
+pub async fn cancel_transcription(
+    app: AppHandle,
+    recording_path: String,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+) -> Result<(), String> {
+    let found = transcription_manager.inner().cancel(&recording_path);
+    if found {
+        transcription_manager.inner().set_state(
+            &recording_path,
+            TranscriptionState {
+                status: "cancelled".to_string(),
+                progress: 0.0,
+                eta_seconds: None,
+                phase: None,
+            },
+        );
+        let _ = app.emit(
+            "transcription-status",
+            TranscriptionStatusEvent {
+                recording_path,
+                status: "cancelled".to_string(),
+                error: None,
+            },
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_all_transcription_states(
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+) -> Result<std::collections::HashMap<String, TranscriptionState>, String> {
+    Ok(transcription_manager.inner().get_all_states())
 }
 
 /// Get LLM settings (endpoint and model, omit API key for security)
