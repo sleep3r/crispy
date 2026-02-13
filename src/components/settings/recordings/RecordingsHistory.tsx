@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Trash2, FileText, Loader2, ExternalLink, Square } from "lucide-react";
 import { AudioPlayer } from "../../ui/AudioPlayer";
@@ -216,7 +216,7 @@ export const RecordingsHistory: React.FC = () => {
       <div className="space-y-2">
         {recordings.map((recording) => {
           const transcriptionState = transcriptionStates.get(recording.path);
-          const audioUrl = `stream://localhost/${encodeURIComponent(recording.path)}`;
+          const audioUrl = convertFileSrc(recording.path);
 
           return (
             <RecordingEntry
