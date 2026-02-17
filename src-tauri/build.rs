@@ -9,8 +9,10 @@ fn main() {
         // Add executable path for bundled libraries
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
         println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
-        // Ensure ScreenCaptureKit framework is linked (fixes x86_64 linker errors)
+        // Ensure frameworks are linked
         println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
+        println!("cargo:rustc-link-lib=framework=AVFoundation");
+        println!("cargo:rustc-link-lib=framework=CoreGraphics");
     }
     
     tauri_build::build()

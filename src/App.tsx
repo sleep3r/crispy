@@ -3,9 +3,27 @@ import { Toaster } from "sonner";
 import "./App.css";
 import Footer from "./components/footer/Footer";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
+import { PermissionsOnboarding } from "./components/PermissionsOnboarding";
+import { usePermissions } from "./hooks/usePermissions";
 
 function App() {
   const [currentSection, setCurrentSection] = useState<SidebarSection>("general");
+  const { allGranted, loading } = usePermissions();
+  const [permissionsDismissed, setPermissionsDismissed] = useState(false);
+
+  // Show loading screen while checking permissions
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background text-mid-gray text-sm select-none cursor-default">
+        Loading…
+      </div>
+    );
+  }
+
+  // Show permissions onboarding if not all granted and user hasn't dismissed it
+  if (!allGranted && !permissionsDismissed) {
+    return <PermissionsOnboarding onContinue={() => setPermissionsDismissed(true)} />;
+  }
 
   const ActiveComponent = SECTIONS_CONFIG[currentSection].component;
 
@@ -23,14 +41,14 @@ function App() {
           },
         }}
       />
-      
+
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
         <Sidebar
           activeSection={currentSection}
           onSectionChange={setCurrentSection}
         />
-        
+
         {/* Scrollable content area */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
           <div className="flex-1 overflow-y-auto">
@@ -40,7 +58,7 @@ function App() {
           </div>
         </div>
       </div>
-      
+
       {/* Fixed footer */}
       <Footer currentSection={currentSection} />
     </div>

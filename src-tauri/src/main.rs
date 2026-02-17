@@ -433,6 +433,8 @@ fn main() {
             commands::settings::set_autostart,
             commands::convert::convert_to_wav,
             commands::convert::check_ffmpeg,
+            commands::permissions::check_permissions,
+            commands::permissions::request_permission,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
