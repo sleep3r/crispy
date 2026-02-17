@@ -7,6 +7,8 @@
     <strong>Privacy-first · Lightning-fast · Completely offline</strong>
   </p>
 
+  <img src="./screenshot.webp" alt="Crispy Screenshot" width="800" />
+
   <p>
     <a href="#features">Features</a> •
     <a href="#quick-start">Quick Start</a> •
