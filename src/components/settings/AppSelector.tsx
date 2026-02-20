@@ -44,16 +44,17 @@ export const AppSelector: React.FC<AppSelectorProps> = React.memo(
       }
     };
 
-    const handleAppSelect = async (appId: string) => {
-      await updateSetting("selected_recording_app", appId);
+    const handleAppSelect = async (bundleId: string) => {
+      await updateSetting("selected_recording_app", bundleId);
     };
 
     const handleReset = async () => {
       await resetSetting("selected_recording_app");
     };
 
+    // Use bundle_id as the option value so the selection persists across app restarts
     const appOptions = apps.map((app) => ({
-      value: app.id,
+      value: app.bundle_id,
       label: app.name,
     }));
 

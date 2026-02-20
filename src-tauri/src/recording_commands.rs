@@ -29,6 +29,23 @@ pub fn do_start_recording(
     state: &AppState,
     app_id: &str,
 ) -> Result<(), String> {
+    // Resolve bundle_id to actual PID-based app id if needed.
+    // Settings now store bundle_id (e.g. "com.spotify.client") instead of
+    // PID-based ids (e.g. "com.spotify.client_12345"). We resolve the bundle_id
+    // to a currently running instance here.
+    let resolved_app_id = if !app_id.is_empty() && app_id != "none" {
+        let apps = recording::get_recordable_apps().unwrap_or_default();
+        if let Some(running) = apps.iter().find(|a| a.bundle_id == app_id) {
+            running.id.clone()
+        } else {
+            // Fallback: use as-is (might be an old PID-based id)
+            app_id.to_string()
+        }
+    } else {
+        app_id.to_string()
+    };
+    let app_id = &resolved_app_id;
+
     let mut recording = state.recording.lock().unwrap();
 
     if recording.writer.lock().unwrap().is_some() {

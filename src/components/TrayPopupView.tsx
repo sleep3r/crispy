@@ -77,8 +77,9 @@ export const TrayPopupView: React.FC = () => {
   };
 
   const selectedApp = getSetting("selected_recording_app") || "none";
+  // Use bundle_id as option value so the selection persists across app restarts
   const appOptions = apps.map((app) => ({
-    value: app.id,
+    value: app.bundle_id,
     label: app.name,
   }));
   const getAppPlaceholder = () => {
