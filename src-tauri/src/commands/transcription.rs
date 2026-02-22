@@ -222,8 +222,8 @@ fn run_transcription(
     let mut pending_16k: Vec<f32> = Vec::with_capacity(transcribe_chunk_samples);
     let mut processed_out_samples = 0usize;
     let start = Instant::now();
-    // Store (start_time_seconds, text) for each chunk -- needed for diarization alignment
-    let mut parts: Vec<(f64, String)> = Vec::new();
+    // Store (start_time_seconds, end_time_seconds, text) for each segment -- needed for diarization alignment
+    let mut parts: Vec<(f64, f64, String)> = Vec::new();
     let mut transcription_started = false;
 
     // Collect all resampled audio for diarization (only if enabled)
@@ -277,9 +277,20 @@ fn run_transcription(
                     },
                 );
             }
-            let chunk_text = tm.transcribe(chunk)?;
-            if !chunk_text.trim().is_empty() {
-                parts.push((chunk_start_seconds, chunk_text));
+            if diarization_enabled {
+                // Word-level timestamps for precise speaker alignment
+                let word_segments = tm.transcribe_with_timestamps(chunk, chunk_start_seconds)?;
+                for (start, end, text) in word_segments {
+                    if !text.trim().is_empty() {
+                        parts.push((start, end, text));
+                    }
+                }
+            } else {
+                let chunk_text = tm.transcribe(chunk)?;
+                if !chunk_text.trim().is_empty() {
+                    let chunk_end_seconds = (processed_out_samples + transcribe_chunk_samples) as f64 / TARGET_SAMPLE_RATE as f64;
+                    parts.push((chunk_start_seconds, chunk_end_seconds, chunk_text));
+                }
             }
             processed_out_samples = processed_out_samples.saturating_add(transcribe_chunk_samples);
             let progress = if total_out_samples > 0 {
@@ -375,11 +386,22 @@ fn run_transcription(
             all_audio_16k.extend_from_slice(&chunk);
         }
         let chunk_start_seconds = processed_out_samples as f64 / TARGET_SAMPLE_RATE as f64;
-        let chunk_text = tm.transcribe(chunk.clone())?;
-        if !chunk_text.trim().is_empty() {
-            parts.push((chunk_start_seconds, chunk_text));
+        let chunk_len = chunk.len();
+        if diarization_enabled {
+            let word_segments = tm.transcribe_with_timestamps(chunk, chunk_start_seconds)?;
+            for (start, end, text) in word_segments {
+                if !text.trim().is_empty() {
+                    parts.push((start, end, text));
+                }
+            }
+        } else {
+            let chunk_text = tm.transcribe(chunk)?;
+            if !chunk_text.trim().is_empty() {
+                let chunk_end_seconds = (processed_out_samples + chunk_len) as f64 / TARGET_SAMPLE_RATE as f64;
+                parts.push((chunk_start_seconds, chunk_end_seconds, chunk_text));
+            }
         }
-        processed_out_samples = processed_out_samples.saturating_add(chunk.len());
+        processed_out_samples = processed_out_samples.saturating_add(chunk_len);
         let progress = if total_out_samples > 0 {
             (processed_out_samples as f32 / total_out_samples as f32).min(1.0)
         } else {
@@ -443,17 +465,17 @@ fn run_transcription(
                     }
                     Err(e) => {
                         eprintln!("[transcription] diarization FAILED: {}", e);
-                        parts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n")
+                        parts.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>().join(" ")
                     }
                 }
             }
             _ => {
                 eprintln!("[transcription] diarization models not downloaded, falling back to plain text");
-                parts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n")
+                parts.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>().join(" ")
             }
         }
     } else {
-        parts.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n")
+        parts.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>().join(" ")
     };
 
     save_transcription_result(app, recording_path, &text)?;

@@ -170,6 +170,75 @@ impl TranscriptionManager {
         }
         Ok(text)
     }
+
+    /// Transcribe audio and return word-level segments with timestamps.
+    /// Returns Vec<(start_seconds, end_seconds, word_text)>.
+    /// For Parakeet: uses Word-level timestamps for precise per-word timing.
+    /// For Whisper/Moonshine: returns single segment per chunk (fallback).
+    pub fn transcribe_with_timestamps(
+        &self,
+        audio: Vec<f32>,
+        chunk_offset_seconds: f64,
+    ) -> Result<Vec<(f64, f64, String)>> {
+        if audio.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut engine_guard = self.engine.lock().unwrap();
+        let engine = engine_guard.as_mut().ok_or_else(|| {
+            anyhow::anyhow!("Model not loaded. Select and load a model first.")
+        })?;
+
+        let result = match engine {
+            LoadedEngine::Parakeet(e) => e
+                .transcribe_samples(
+                    audio.clone(),
+                    Some(ParakeetInferenceParams {
+                        timestamp_granularity: TimestampGranularity::Word,
+                        ..Default::default()
+                    }),
+                )
+                .map_err(|x| anyhow::anyhow!("Parakeet: {}", x))?,
+            LoadedEngine::Whisper(e) => e
+                .transcribe_samples(audio.clone(), Some(WhisperInferenceParams::default()))
+                .map_err(|x| anyhow::anyhow!("Whisper: {}", x))?,
+            LoadedEngine::Moonshine(e) => e
+                .transcribe_samples(audio.clone(), None)
+                .map_err(|x| anyhow::anyhow!("Moonshine: {}", x))?,
+        };
+
+        let text = result.text.trim().to_string();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // If we have segments (word timestamps), use them
+        if let Some(segments) = result.segments {
+            if !segments.is_empty() {
+                let word_segments: Vec<(f64, f64, String)> = segments
+                    .into_iter()
+                    .filter(|s| !s.text.trim().is_empty())
+                    .map(|s| {
+                        (
+                            chunk_offset_seconds + s.start as f64,
+                            chunk_offset_seconds + s.end as f64,
+                            s.text,
+                        )
+                    })
+                    .collect();
+                info!("Transcription with {} word segments", word_segments.len());
+                return Ok(word_segments);
+            }
+        }
+
+        // Fallback: return whole text as single segment
+        let chunk_duration = audio.len() as f64 / 16000.0;
+        info!("Transcription fallback: single segment, {} chars", text.len());
+        Ok(vec![(
+            chunk_offset_seconds,
+            chunk_offset_seconds + chunk_duration,
+            text,
+        )])
+    }
 }
 
 /// Base directory for transcriptions: ~/Documents/Crispy/Transcriptions (next to Recordings and settings).
