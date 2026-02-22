@@ -28,7 +28,7 @@ const DIARIZATION_MODELS = ["diarize-segmentation", "diarize-embedding"];
 
 const DEFAULTS = {
   max_speakers: "3",
-  threshold: "0.30",
+  threshold: "0.50",
   merge_gap: "2.5",
 };
 

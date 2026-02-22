@@ -51,7 +51,7 @@ fn default_diarization_max_speakers() -> String {
 }
 
 fn default_diarization_threshold() -> String {
-    "0.30".to_string()
+    "0.50".to_string()
 }
 
 fn default_diarization_merge_gap() -> String {
@@ -70,7 +70,7 @@ impl Default for AppSettings {
             autostart_enabled: "false".to_string(),
             diarization_enabled: "false".to_string(),
             diarization_max_speakers: "3".to_string(),
-            diarization_threshold: "0.30".to_string(),
+            diarization_threshold: "0.50".to_string(),
             diarization_merge_gap: "2.5".to_string(),
         }
     }
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(settings.autostart_enabled, "false");
         assert_eq!(settings.diarization_enabled, "false");
         assert_eq!(settings.diarization_max_speakers, "3");
-        assert_eq!(settings.diarization_threshold, "0.30");
+        assert_eq!(settings.diarization_threshold, "0.50");
         assert_eq!(settings.diarization_merge_gap, "2.5");
     }
 
@@ -313,7 +313,7 @@ mod tests {
         assert_eq!(settings.autostart_enabled, "false");
         assert_eq!(settings.diarization_enabled, "false");
         assert_eq!(settings.diarization_max_speakers, "3");
-        assert_eq!(settings.diarization_threshold, "0.30");
+        assert_eq!(settings.diarization_threshold, "0.50");
         assert_eq!(settings.diarization_merge_gap, "2.5");
     }
 

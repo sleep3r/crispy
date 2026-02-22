@@ -136,7 +136,7 @@ fn run_transcription(
     let app_settings = crate::llm_settings::load_app_settings(app).unwrap_or_default();
     let diarization_enabled = app_settings.diarization_enabled == "true";
     let diarization_max_speakers: usize = app_settings.diarization_max_speakers.parse().unwrap_or(3);
-    let diarization_threshold: f64 = app_settings.diarization_threshold.parse().unwrap_or(0.30);
+    let diarization_threshold: f64 = app_settings.diarization_threshold.parse().unwrap_or(0.50);
     let diarization_merge_gap: f64 = app_settings.diarization_merge_gap.parse().unwrap_or(2.5);
     eprintln!(
         "[transcription] diarization: enabled={}, max_speakers={}, threshold={}, merge_gap={}",
