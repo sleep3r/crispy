@@ -610,3 +610,199 @@ fn find_speaker_at_time(time: f64, segments: &[SpeakerSegment]) -> String {
     }
     closest
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- f32_to_i16 ---
+
+    #[test]
+    fn f32_to_i16_silence() {
+        assert_eq!(f32_to_i16(&[0.0, 0.0, 0.0]), vec![0, 0, 0]);
+    }
+
+    #[test]
+    fn f32_to_i16_full_scale() {
+        let result = f32_to_i16(&[1.0, -1.0]);
+        assert_eq!(result[0], 32767);
+        assert_eq!(result[1], -32767);
+    }
+
+    #[test]
+    fn f32_to_i16_clamps_overflow() {
+        // Values beyond [-1, 1] should be clamped
+        let result = f32_to_i16(&[2.0, -3.0]);
+        assert_eq!(result[0], 32767);
+        assert_eq!(result[1], -32767);
+    }
+
+    #[test]
+    fn f32_to_i16_half_amplitude() {
+        let result = f32_to_i16(&[0.5]);
+        assert_eq!(result[0], 16383);
+    }
+
+    #[test]
+    fn f32_to_i16_empty() {
+        assert!(f32_to_i16(&[]).is_empty());
+    }
+
+    // --- cosine_distance ---
+
+    #[test]
+    fn cosine_distance_identical_vectors() {
+        let v = vec![1.0, 2.0, 3.0];
+        let d = cosine_distance(&v, &v);
+        assert!(d.abs() < 0.001, "Identical vectors should have distance ~0, got {}", d);
+    }
+
+    #[test]
+    fn cosine_distance_opposite_vectors() {
+        let a = vec![1.0, 0.0];
+        let b = vec![-1.0, 0.0];
+        let d = cosine_distance(&a, &b);
+        assert!((d - 2.0).abs() < 0.001, "Opposite vectors should have distance ~2, got {}", d);
+    }
+
+    #[test]
+    fn cosine_distance_orthogonal_vectors() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let d = cosine_distance(&a, &b);
+        assert!((d - 1.0).abs() < 0.001, "Orthogonal vectors should have distance ~1, got {}", d);
+    }
+
+    #[test]
+    fn cosine_distance_zero_vector() {
+        let a = vec![0.0, 0.0];
+        let b = vec![1.0, 1.0];
+        assert_eq!(cosine_distance(&a, &b), 1.0);
+    }
+
+    // --- merge_consecutive_segments ---
+
+    #[test]
+    fn merge_consecutive_same_speaker() {
+        let segments = vec![
+            SpeakerSegment { start: 0.0, end: 1.0, speaker: "Speaker 1".to_string() },
+            SpeakerSegment { start: 1.1, end: 2.0, speaker: "Speaker 1".to_string() },
+        ];
+        let merged = merge_consecutive_segments(&segments, 0.5);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].start, 0.0);
+        assert_eq!(merged[0].end, 2.0);
+    }
+
+    #[test]
+    fn merge_consecutive_different_speakers() {
+        let segments = vec![
+            SpeakerSegment { start: 0.0, end: 1.0, speaker: "Speaker 1".to_string() },
+            SpeakerSegment { start: 1.1, end: 2.0, speaker: "Speaker 2".to_string() },
+        ];
+        let merged = merge_consecutive_segments(&segments, 0.5);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_consecutive_gap_too_large() {
+        let segments = vec![
+            SpeakerSegment { start: 0.0, end: 1.0, speaker: "Speaker 1".to_string() },
+            SpeakerSegment { start: 5.0, end: 6.0, speaker: "Speaker 1".to_string() },
+        ];
+        let merged = merge_consecutive_segments(&segments, 0.5);
+        assert_eq!(merged.len(), 2, "Gap of 4s exceeds merge_gap of 0.5s");
+    }
+
+    #[test]
+    fn merge_consecutive_empty() {
+        let merged = merge_consecutive_segments(&[], 0.5);
+        assert!(merged.is_empty());
+    }
+
+    // --- find_speaker_at_time ---
+
+    #[test]
+    fn find_speaker_exact_match() {
+        let segments = vec![
+            SpeakerSegment { start: 0.0, end: 5.0, speaker: "Speaker 1".to_string() },
+            SpeakerSegment { start: 5.5, end: 10.0, speaker: "Speaker 2".to_string() },
+        ];
+        assert_eq!(find_speaker_at_time(2.5, &segments), "Speaker 1");
+        assert_eq!(find_speaker_at_time(7.0, &segments), "Speaker 2");
+    }
+
+    #[test]
+    fn find_speaker_boundary() {
+        let segments = vec![
+            SpeakerSegment { start: 0.0, end: 5.0, speaker: "Speaker 1".to_string() },
+        ];
+        // At exact boundary
+        assert_eq!(find_speaker_at_time(0.0, &segments), "Speaker 1");
+        assert_eq!(find_speaker_at_time(5.0, &segments), "Speaker 1");
+    }
+
+    #[test]
+    fn find_speaker_in_gap_picks_closest() {
+        let segments = vec![
+            SpeakerSegment { start: 0.0, end: 3.0, speaker: "Speaker 1".to_string() },
+            SpeakerSegment { start: 7.0, end: 10.0, speaker: "Speaker 2".to_string() },
+        ];
+        // Time 4.0 is closer to Speaker 1 (ends at 3.0, dist=1.0) than Speaker 2 (starts at 7.0, dist=3.0)
+        assert_eq!(find_speaker_at_time(4.0, &segments), "Speaker 1");
+        // Time 6.0 is closer to Speaker 2 (starts at 7.0, dist=1.0) than Speaker 1 (ends at 3.0, dist=3.0)
+        assert_eq!(find_speaker_at_time(6.0, &segments), "Speaker 2");
+    }
+
+    // --- format_diarized_text ---
+
+    #[test]
+    fn format_diarized_text_no_speakers() {
+        let text = vec![
+            (0.0, 0.5, "Hello".to_string()),
+            (0.5, 1.0, "world".to_string()),
+        ];
+        let result = format_diarized_text(&text, &[]);
+        assert_eq!(result, "Hello world");
+    }
+
+    #[test]
+    fn format_diarized_text_empty() {
+        let result = format_diarized_text(&[], &[]);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn format_diarized_text_speaker_changes() {
+        let text = vec![
+            (0.0, 0.5, "Hello".to_string()),
+            (0.5, 1.0, "there".to_string()),
+            (5.0, 5.5, "Hi".to_string()),
+        ];
+        let speakers = vec![
+            SpeakerSegment { start: 0.0, end: 2.0, speaker: "Speaker 1".to_string() },
+            SpeakerSegment { start: 4.0, end: 7.0, speaker: "Speaker 2".to_string() },
+        ];
+        let result = format_diarized_text(&text, &speakers);
+        assert!(result.contains("[Speaker 1|"), "Should have Speaker 1 header");
+        assert!(result.contains("Hello"), "Should contain Hello");
+        assert!(result.contains("[Speaker 2|"), "Should have Speaker 2 header");
+        assert!(result.contains("Hi"), "Should contain Hi");
+    }
+
+    #[test]
+    fn format_diarized_text_skips_empty_words() {
+        let text = vec![
+            (0.0, 0.5, "Hello".to_string()),
+            (0.5, 1.0, "  ".to_string()),
+            (1.0, 1.5, "world".to_string()),
+        ];
+        let speakers = vec![
+            SpeakerSegment { start: 0.0, end: 2.0, speaker: "Speaker 1".to_string() },
+        ];
+        let result = format_diarized_text(&text, &speakers);
+        assert!(result.contains("Hello"));
+        assert!(result.contains("world"));
+        // The "  " should be skipped
+    }
+}

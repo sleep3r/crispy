@@ -5,6 +5,8 @@ use crate::managers::transcription::{
     load_transcription_chat_history, load_transcription_metadata, load_transcription_result,
     save_transcription_chat_history, save_transcription_metadata, save_transcription_result,
     ChatHistoryMessage, TranscriptionManager, TranscriptionState,
+    TranscriptionStatusEvent, TranscriptionPhaseEvent, TranscriptionProgressEvent,
+    TranscriptionOpenEvent,
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -25,30 +27,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use std::time::Instant;
 
-#[derive(Clone, Serialize)]
-pub struct TranscriptionStatusEvent {
-    pub recording_path: String,
-    pub status: String, // "started" | "completed" | "error"
-    pub error: Option<String>,
-}
 
-#[derive(Clone, Serialize)]
-pub struct TranscriptionPhaseEvent {
-    pub recording_path: String,
-    pub phase: String, // "loading-model" | "preparing-audio" | "transcribing"
-}
-
-#[derive(Clone, Serialize)]
-pub struct TranscriptionProgressEvent {
-    pub recording_path: String,
-    pub progress: f32, // 0.0 - 1.0
-    pub eta_seconds: Option<u64>,
-}
-
-#[derive(Clone, Serialize)]
-pub struct TranscriptionOpenEvent {
-    pub recording_path: String,
-}
 
 #[tauri::command]
 pub async fn start_transcription(

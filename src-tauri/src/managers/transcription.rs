@@ -3,6 +3,7 @@
 use crate::managers::model::{EngineType, ModelManager};
 use anyhow::Result;
 use log::{debug, info};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +40,31 @@ pub struct TranscriptionState {
     pub progress: f32,
     pub eta_seconds: Option<u64>,
     pub phase: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TranscriptionStatusEvent {
+    pub recording_path: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TranscriptionPhaseEvent {
+    pub recording_path: String,
+    pub phase: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TranscriptionProgressEvent {
+    pub recording_path: String,
+    pub progress: f32,
+    pub eta_seconds: Option<u64>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct TranscriptionOpenEvent {
+    pub recording_path: String,
 }
 
 impl TranscriptionManager {

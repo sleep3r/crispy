@@ -8,7 +8,6 @@ mod settings;
 mod managers;
 mod paths;
 mod recording;
-mod recording_commands;
 mod window;
 
 #[cfg(target_os = "macos")]
@@ -43,17 +42,6 @@ fn epoch_millis() -> u64 {
         .as_millis() as u64
 }
 
-#[tauri::command]
-fn get_platform() -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    return Ok("windows".to_string());
-    #[cfg(target_os = "macos")]
-    return Ok("macos".to_string());
-    #[cfg(target_os = "linux")]
-    return Ok("linux".to_string());
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    return Ok("unknown".to_string());
-}
 
 /// Parse HTTP Range header like "bytes=0-1023" into (start, end) inclusive.
 fn parse_range(header: &str, file_size: u64) -> Option<(u64, u64)> {
@@ -382,30 +370,30 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            get_platform,
+            commands::audio::get_platform,
             audio::get_input_devices,
             audio::get_output_devices,
             audio::get_default_devices,
-            start_monitoring,
-            stop_monitoring,
-            set_monitoring_volume,
-            set_monitoring_model,
+            commands::audio::start_monitoring,
+            commands::audio::stop_monitoring,
+            commands::audio::set_monitoring_volume,
+            commands::audio::set_monitoring_model,
             audio::get_system_input_volume,
             audio::set_system_input_volume,
             audio::get_blackhole_status,
-            recording_commands::get_recordable_apps,
-            recording_commands::start_recording,
-            recording_commands::stop_recording,
-            recording_commands::is_recording,
-            recording_commands::get_recordings_dir_path,
-            recording_commands::open_recordings_dir,
-            recording_commands::open_url,
+            commands::recording::get_recordable_apps,
+            commands::recording::start_recording,
+            commands::recording::stop_recording,
+            commands::recording::is_recording,
+            commands::recording::get_recordings_dir_path,
+            commands::recording::open_recordings_dir,
+            commands::recording::open_url,
             window::show_main_window_cmd,
             window::quit_app,
-            recording_commands::get_recordings,
-            recording_commands::rename_recording,
-            recording_commands::delete_recording,
-            recording_commands::read_recording_file,
+            commands::recording::get_recordings,
+            commands::recording::rename_recording,
+            commands::recording::delete_recording,
+            commands::recording::read_recording_file,
             commands::models::get_available_models,
             commands::ns_models::get_available_ns_models,
             commands::models::get_model_info,
@@ -440,41 +428,60 @@ fn main() {
         .expect("error while running tauri application");
 }
 
-#[tauri::command]
-fn start_monitoring(
-    state: tauri::State<AppState>,
-    app_handle: tauri::AppHandle,
-    device_name: String,
-    output_device_name: String,
-    model_name: String,
-    volume: f32,
-) -> Result<(), String> {
-    let recording_mic_buffer = state.recording.lock().unwrap().mic_buffer.clone();
-    audio::start_monitoring(
-        state.audio.clone(),
-        recording_mic_buffer,
-        app_handle,
-        device_name,
-        output_device_name,
-        model_name,
-        volume,
-    )
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[tauri::command]
-fn stop_monitoring(state: tauri::State<AppState>) -> Result<(), String> {
-    audio::stop_monitoring(state.audio.clone())
-}
+    #[test]
+    fn parse_range_standard() {
+        assert_eq!(parse_range("bytes=0-1023", 10000), Some((0, 1023)));
+    }
 
-#[tauri::command]
-fn set_monitoring_volume(state: tauri::State<AppState>, volume: f32) -> Result<(), String> {
-    audio::set_monitoring_volume(state.audio.clone(), volume)
-}
+    #[test]
+    fn parse_range_from_start_to_end() {
+        assert_eq!(parse_range("bytes=0-9999", 10000), Some((0, 9999)));
+    }
 
-#[tauri::command]
-fn set_monitoring_model(
-    state: tauri::State<AppState>,
-    model_name: String,
-) -> Result<(), String> {
-    audio::set_monitoring_model(state.audio.clone(), model_name)
+    #[test]
+    fn parse_range_open_ended() {
+        // No end specified → goes to file_size - 1
+        assert_eq!(parse_range("bytes=500-", 10000), Some((500, 9999)));
+    }
+
+    #[test]
+    fn parse_range_suffix() {
+        // Last 500 bytes: bytes=-500
+        assert_eq!(parse_range("bytes=-500", 10000), Some((9500, 9999)));
+    }
+
+    #[test]
+    fn parse_range_suffix_larger_than_file() {
+        // Suffix bigger than file → starts at 0
+        assert_eq!(parse_range("bytes=-99999", 100), Some((0, 99)));
+    }
+
+    #[test]
+    fn parse_range_clamps_end_to_file_size() {
+        assert_eq!(parse_range("bytes=0-99999", 100), Some((0, 99)));
+    }
+
+    #[test]
+    fn parse_range_empty_file() {
+        assert_eq!(parse_range("bytes=0-10", 0), None);
+    }
+
+    #[test]
+    fn parse_range_start_beyond_file() {
+        assert_eq!(parse_range("bytes=10000-20000", 100), None);
+    }
+
+    #[test]
+    fn parse_range_invalid_prefix() {
+        assert_eq!(parse_range("chars=0-100", 10000), None);
+    }
+
+    #[test]
+    fn parse_range_whitespace_trimmed() {
+        assert_eq!(parse_range("  bytes=0-1023  ", 10000), Some((0, 1023)));
+    }
 }

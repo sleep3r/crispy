@@ -1032,3 +1032,66 @@ pub fn get_blackhole_status() -> Result<BlackHoleStatus, String> {
         paths: Vec::new(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_resampler_same_rate_passthrough() {
+        let mut resampler = LinearResampler::new(48000.0, 48000.0);
+        let mut output = Vec::new();
+        for i in 0..10 {
+            let sample = i as f32 * 0.1;
+            resampler.process_sample(sample, |s| output.push(s));
+        }
+        // Same rate → each input produces exactly one output
+        assert_eq!(output.len(), 10);
+        for (i, &s) in output.iter().enumerate() {
+            assert!((s - i as f32 * 0.1).abs() < 0.001, "Sample {} mismatch", i);
+        }
+    }
+
+    #[test]
+    fn linear_resampler_downsample_produces_fewer() {
+        // 48kHz → 16kHz ≈ 3:1 ratio
+        let mut resampler = LinearResampler::new(48000.0, 16000.0);
+        let mut output = Vec::new();
+        for _ in 0..300 {
+            resampler.process_sample(0.5, |s| output.push(s));
+        }
+        // 300 input samples at 3:1 → ~100 output samples (minus first sample init)
+        assert!(output.len() > 80 && output.len() < 120,
+            "Expected ~100 output samples, got {}", output.len());
+    }
+
+    #[test]
+    fn linear_resampler_upsample_produces_more() {
+        // 16kHz → 48kHz ≈ 1:3 ratio
+        let mut resampler = LinearResampler::new(16000.0, 48000.0);
+        let mut output = Vec::new();
+        for _ in 0..100 {
+            resampler.process_sample(0.5, |s| output.push(s));
+        }
+        // 100 input samples at 1:3 → ~300 output samples
+        assert!(output.len() > 250 && output.len() < 350,
+            "Expected ~300 output samples, got {}", output.len());
+    }
+
+    #[test]
+    fn linear_resampler_rates_preserved() {
+        let resampler = LinearResampler::new(44100.0, 48000.0);
+        let (input, output) = resampler.rates();
+        assert!((input - 44100.0).abs() < 0.1);
+        assert!((output - 48000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn linear_resampler_set_rates_updates() {
+        let mut resampler = LinearResampler::new(48000.0, 48000.0);
+        resampler.set_rates(44100.0, 16000.0);
+        let (input, output) = resampler.rates();
+        assert!((input - 44100.0).abs() < 0.1);
+        assert!((output - 16000.0).abs() < 0.1);
+    }
+}
