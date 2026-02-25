@@ -4,7 +4,7 @@
 mod app_state;
 mod audio;
 mod commands;
-mod llm_settings;
+mod settings;
 mod managers;
 mod paths;
 mod recording;
@@ -253,7 +253,7 @@ fn main() {
             );
             app.manage(transcription_manager);
 
-            if let Ok(app_settings) = llm_settings::load_app_settings(app.handle()) {
+            if let Ok(app_settings) = settings::load_app_settings(app.handle()) {
                 if !app_settings.selected_transcription_model.is_empty()
                     && app_settings.selected_transcription_model != "none"
                 {
@@ -421,8 +421,8 @@ fn main() {
             commands::transcription::get_transcription_state,
             commands::transcription::open_transcription_window,
             commands::transcription::has_transcription_result,
-            commands::transcription::get_llm_settings,
-            commands::transcription::set_llm_settings,
+            commands::settings::get_llm_settings,
+            commands::settings::set_llm_settings,
             commands::transcription::stream_transcription_chat,
             commands::transcription::get_transcription_chat_history,
             commands::transcription::set_transcription_chat_history,

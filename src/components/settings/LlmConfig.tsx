@@ -7,7 +7,7 @@ interface LlmSettingsData {
   model: string;
 }
 
-export const LlmSettings: React.FC<{ grouped?: boolean }> = ({ grouped = false }) => {
+export const LlmConfig: React.FC<{ grouped?: boolean }> = ({ grouped = false }) => {
   const [endpoint, setEndpoint] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState("");

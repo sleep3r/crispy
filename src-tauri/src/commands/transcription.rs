@@ -133,7 +133,7 @@ fn run_transcription(
     }
 
     // Load diarization settings
-    let app_settings = crate::llm_settings::load_app_settings(app).unwrap_or_default();
+    let app_settings = crate::settings::load_app_settings(app).unwrap_or_default();
     let diarization_enabled = app_settings.diarization_enabled == "true";
     let diarization_max_speakers: usize = app_settings.diarization_max_speakers.parse().unwrap_or(3);
     let diarization_threshold: f64 = app_settings.diarization_threshold.parse().unwrap_or(0.50);
@@ -577,32 +577,7 @@ pub async fn get_all_transcription_states(
     Ok(transcription_manager.inner().get_all_states())
 }
 
-/// Get LLM settings (endpoint and model, omit API key for security)
-#[tauri::command]
-pub async fn get_llm_settings(app: AppHandle) -> Result<crate::llm_settings::LlmSettingsPublic, String> {
-    let settings = crate::llm_settings::load_llm_settings(&app).map_err(|e| e.to_string())?;
-    Ok(crate::llm_settings::LlmSettingsPublic {
-        endpoint: settings.endpoint,
-        model: settings.model,
-    })
-}
 
-/// Set LLM settings (endpoint, API key, model)
-#[tauri::command]
-pub async fn set_llm_settings(
-    app: AppHandle,
-    endpoint: String,
-    api_key: String,
-    model: String,
-) -> Result<(), String> {
-    let settings = crate::llm_settings::LlmSettings {
-        endpoint,
-        api_key,
-        model,
-    };
-    crate::llm_settings::save_llm_settings(&app, &settings).map_err(|e| e.to_string())?;
-    Ok(())
-}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ChatMessageDto {
@@ -685,7 +660,7 @@ async fn do_stream_chat(
     messages: Vec<ChatMessageDto>,
     chat_id: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let settings = crate::llm_settings::load_llm_settings(app)?;
+    let settings = crate::settings::load_llm_settings(app)?;
     if settings.api_key.is_empty() {
         return Err("API key not configured. Set it in Settings.".into());
     }

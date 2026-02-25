@@ -1,7 +1,7 @@
 import React from "react";
 import { SettingsGroup } from "../ui/SettingsGroup";
 import { RecordingsDirectory } from "./RecordingsDirectory";
-import { LlmSettings } from "./LlmSettings";
+import { LlmConfig } from "./LlmConfig";
 import { AutostartToggle } from "./AutostartToggle";
 import { DiarizationToggle } from "./DiarizationToggle";
 
@@ -40,8 +40,9 @@ export const SettingsPage: React.FC = () => {
         title="LLM Chat"
         description="Configure language model for transcription chat."
       >
-        <LlmSettings grouped />
+        <LlmConfig grouped />
       </SettingsGroup>
     </div>
   );
 };
+
