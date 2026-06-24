@@ -27,8 +27,8 @@ interface DiarizationToggleProps {
 const DIARIZATION_MODELS = ["diarize-segmentation", "diarize-embedding"];
 
 const DEFAULTS = {
-  max_speakers: "3",
-  threshold: "0.50",
+  // Upper bound for automatic speaker-count detection (NME-SC), not a hard target.
+  max_speakers: "6",
   merge_gap: "2.5",
 };
 
@@ -46,7 +46,6 @@ export const DiarizationToggle: React.FC<DiarizationToggleProps> = ({
 
   // Diarization hyperparameters
   const maxSpeakers = Number.parseInt(getSetting("diarization_max_speakers") || DEFAULTS.max_speakers, 10);
-  const threshold = Number.parseFloat(getSetting("diarization_threshold") || DEFAULTS.threshold);
   const mergeGap = Number.parseFloat(getSetting("diarization_merge_gap") || DEFAULTS.merge_gap);
 
   const checkModels = useCallback(async () => {
@@ -116,13 +115,11 @@ export const DiarizationToggle: React.FC<DiarizationToggleProps> = ({
 
   const resetToDefaults = () => {
     updateSetting("diarization_max_speakers", DEFAULTS.max_speakers);
-    updateSetting("diarization_threshold", DEFAULTS.threshold);
     updateSetting("diarization_merge_gap", DEFAULTS.merge_gap);
   };
 
   const isDefault =
     maxSpeakers === Number.parseInt(DEFAULTS.max_speakers, 10) &&
-    threshold === Number.parseFloat(DEFAULTS.threshold) &&
     mergeGap === Number.parseFloat(DEFAULTS.merge_gap);
 
   const totalProgress =
@@ -201,7 +198,7 @@ export const DiarizationToggle: React.FC<DiarizationToggleProps> = ({
               {/* Max Speakers */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-mid-gray/70">Max speakers</span>
+                  <span className="text-xs text-mid-gray/70">Max expected speakers</span>
                   <span className="text-xs text-mid-gray/50 tabular-nums w-6 text-right">{maxSpeakers}</span>
                 </div>
                 <input
@@ -216,27 +213,6 @@ export const DiarizationToggle: React.FC<DiarizationToggleProps> = ({
                 <div className="flex justify-between text-[10px] text-mid-gray/30 mt-0.5">
                   <span>2</span>
                   <span>12</span>
-                </div>
-              </div>
-
-              {/* Similarity Threshold */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-mid-gray/70">Sensitivity</span>
-                  <span className="text-xs text-mid-gray/50 tabular-nums">{threshold.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min={0.1}
-                  max={0.8}
-                  step={0.05}
-                  value={threshold}
-                  onChange={(e) => updateSetting("diarization_threshold", e.target.value)}
-                  className="w-full h-1 bg-mid-gray/15 rounded-full appearance-none cursor-pointer accent-logo-primary [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-logo-primary [&::-webkit-slider-thumb]:appearance-none"
-                />
-                <div className="flex justify-between text-[10px] text-mid-gray/30 mt-0.5">
-                  <span>Fewer speakers</span>
-                  <span>More speakers</span>
                 </div>
               </div>
 

@@ -189,7 +189,7 @@ export const FooterModelSelector: React.FC<FooterModelSelectorProps> = ({
       </button>
 
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-64 bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1 z-50">
+        <div className="absolute bottom-full left-0 mb-2 w-64 max-h-[calc(100vh-80px)] overflow-y-auto overscroll-contain bg-background border border-mid-gray/20 rounded-lg shadow-lg py-1 z-50">
           <div className="px-3 py-1.5 text-xs font-medium text-mid-gray border-b border-mid-gray/20">
             {isNoise ? "Noise suppression" : "Transcription"}
           </div>

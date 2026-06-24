@@ -134,12 +134,19 @@ export const ConvertView: React.FC = () => {
     setIsDragging(false);
   });
 
-  // Drag hover events
-  useTauriListen("tauri://drag", () => {
+  // Drag hover events. Tauri v2 renamed these from v1: the hover events are
+  // `drag-enter` / `drag-over`, and the cancel event is `drag-leave`.
+  // (The old `tauri://drag` / `tauri://drag-cancelled` never fire in v2, so the
+  // drop-zone highlight previously never lit up.)
+  useTauriListen("tauri://drag-enter", () => {
     setIsDragging(true);
   });
 
-  useTauriListen("tauri://drag-cancelled", () => {
+  useTauriListen("tauri://drag-over", () => {
+    setIsDragging(true);
+  });
+
+  useTauriListen("tauri://drag-leave", () => {
     setIsDragging(false);
   });
 

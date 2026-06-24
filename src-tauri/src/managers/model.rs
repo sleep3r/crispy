@@ -19,6 +19,10 @@ pub enum EngineType {
     Whisper,
     Parakeet,
     Moonshine,
+    GigaAM,
+    SenseVoice,
+    Canary,
+    Cohere,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +204,108 @@ impl ModelManager {
             },
         );
 
+        // --- Models adapted from Handy (transcribe-rs 0.3 ONNX engines) ---
+        // NOTE: URLs point at Crispy's own bucket. Mirror the tarballs there from
+        // Handy's CDN (https://blob.handy.computer/<file>) before release. The
+        // GigaAM directory MUST contain both `model.int8.onnx` and `vocab.txt`.
+
+        available_models.insert(
+            "gigaam-v3-e2e-ctc".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-e2e-ctc".to_string(),
+                name: "GigaAM v3".to_string(),
+                description: "Russian speech recognition. Fast and accurate.".to_string(),
+                filename: "giga-am-v3-int8".to_string(),
+                url: Some("https://s3.crispy.fyi/models/giga-am-v3-int8.tar.gz".to_string()),
+                size_mb: 151,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::GigaAM,
+                accuracy_score: 0.85,
+                speed_score: 0.75,
+            },
+        );
+
+        available_models.insert(
+            "sense-voice-int8".to_string(),
+            ModelInfo {
+                id: "sense-voice-int8".to_string(),
+                name: "SenseVoice".to_string(),
+                description: "Very fast. Chinese, English, Japanese, Korean, Cantonese.".to_string(),
+                filename: "sense-voice-int8".to_string(),
+                url: Some("https://s3.crispy.fyi/models/sense-voice-int8.tar.gz".to_string()),
+                size_mb: 152,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::SenseVoice,
+                accuracy_score: 0.65,
+                speed_score: 0.95,
+            },
+        );
+
+        available_models.insert(
+            "canary-180m-flash".to_string(),
+            ModelInfo {
+                id: "canary-180m-flash".to_string(),
+                name: "Canary 180M Flash".to_string(),
+                description: "Very fast. English, German, Spanish, French. Supports translation."
+                    .to_string(),
+                filename: "canary-180m-flash".to_string(),
+                url: Some("https://s3.crispy.fyi/models/canary-180m-flash.tar.gz".to_string()),
+                size_mb: 146,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::Canary,
+                accuracy_score: 0.75,
+                speed_score: 0.85,
+            },
+        );
+
+        available_models.insert(
+            "canary-1b-v2".to_string(),
+            ModelInfo {
+                id: "canary-1b-v2".to_string(),
+                name: "Canary 1B v2".to_string(),
+                description: "Accurate multilingual. 25 European languages. Supports translation."
+                    .to_string(),
+                filename: "canary-1b-v2".to_string(),
+                url: Some("https://s3.crispy.fyi/models/canary-1b-v2.tar.gz".to_string()),
+                size_mb: 691,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::Canary,
+                accuracy_score: 0.85,
+                speed_score: 0.70,
+            },
+        );
+
+        available_models.insert(
+            "cohere-int8".to_string(),
+            ModelInfo {
+                id: "cohere-int8".to_string(),
+                name: "Cohere".to_string(),
+                description: "Large, slower, but very accurate multilingual model.".to_string(),
+                filename: "cohere-int8".to_string(),
+                url: Some("https://s3.crispy.fyi/models/cohere-int8.tar.gz".to_string()),
+                size_mb: 1708,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::Cohere,
+                accuracy_score: 0.90,
+                speed_score: 0.60,
+            },
+        );
+
         // Diarization models (pyannote-rs)
         available_models.insert(
             "diarize-segmentation".to_string(),
@@ -361,7 +467,13 @@ impl ModelManager {
 
         let cancel_flag = Arc::new(AtomicBool::new(false));
         {
+            // Check-and-insert atomically so two concurrent download_model() calls
+            // for the same model can't clobber each other's cancel flag and corrupt
+            // the shared .partial file.
             let mut cancels = self.download_cancels.lock().unwrap();
+            if cancels.contains_key(model_id) {
+                return Err(anyhow::anyhow!("Download already in progress: {}", model_id));
+            }
             cancels.insert(model_id.to_string(), cancel_flag.clone());
         }
         let _cancel_guard = CancelGuard {
@@ -510,34 +622,55 @@ impl ModelManager {
                 .models_dir
                 .join(format!("{}.extracting", &model_info.filename));
             let final_model_dir = self.models_dir.join(&model_info.filename);
-            if temp_extract_dir.exists() {
-                let _ = fs::remove_dir_all(&temp_extract_dir);
-            }
-            fs::create_dir_all(&temp_extract_dir)?;
-            let tar_gz = File::open(&partial_path)?;
-            let tar = GzDecoder::new(tar_gz);
-            let mut archive = Archive::new(tar);
-            archive.unpack(&temp_extract_dir).map_err(|e| {
-                let _ = fs::remove_dir_all(&temp_extract_dir);
-                anyhow::anyhow!("Failed to extract archive: {}", e)
-            })?;
-            let extracted_dirs: Vec<_> = fs::read_dir(&temp_extract_dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
-                .collect();
-            if extracted_dirs.len() == 1 {
-                let source_dir = extracted_dirs[0].path();
-                if final_model_dir.exists() {
-                    fs::remove_dir_all(&final_model_dir)?;
+
+            // Run extraction in a fallible closure so that ANY failure (open, create,
+            // unpack, read_dir, rename) emits `model-extraction-failed` and resets the
+            // downloading flag. Previously a failure left the frontend stuck in the
+            // "extracting" state forever because no terminal event was ever emitted.
+            let extract = || -> Result<()> {
+                if temp_extract_dir.exists() {
+                    let _ = fs::remove_dir_all(&temp_extract_dir);
                 }
-                fs::rename(&source_dir, &final_model_dir)?;
-                let _ = fs::remove_dir_all(&temp_extract_dir);
-            } else {
-                if final_model_dir.exists() {
-                    fs::remove_dir_all(&final_model_dir)?;
+                fs::create_dir_all(&temp_extract_dir)?;
+                let tar_gz = File::open(&partial_path)?;
+                let tar = GzDecoder::new(tar_gz);
+                let mut archive = Archive::new(tar);
+                archive.unpack(&temp_extract_dir)?;
+                let extracted_dirs: Vec<_> = fs::read_dir(&temp_extract_dir)?
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                    .collect();
+                if extracted_dirs.len() == 1 {
+                    let source_dir = extracted_dirs[0].path();
+                    if final_model_dir.exists() {
+                        fs::remove_dir_all(&final_model_dir)?;
+                    }
+                    fs::rename(&source_dir, &final_model_dir)?;
+                    let _ = fs::remove_dir_all(&temp_extract_dir);
+                } else {
+                    if final_model_dir.exists() {
+                        fs::remove_dir_all(&final_model_dir)?;
+                    }
+                    fs::rename(&temp_extract_dir, &final_model_dir)?;
                 }
-                fs::rename(&temp_extract_dir, &final_model_dir)?;
+                Ok(())
+            };
+
+            if let Err(e) = extract() {
+                let _ = fs::remove_dir_all(&temp_extract_dir);
+                {
+                    let mut models = self.available_models.lock().unwrap();
+                    if let Some(model) = models.get_mut(model_id) {
+                        model.is_downloading = false;
+                    }
+                }
+                let _ = self.app_handle.emit(
+                    "model-extraction-failed",
+                    serde_json::json!({ "model_id": model_id, "error": e.to_string() }),
+                );
+                return Err(anyhow::anyhow!("Failed to extract archive: {}", e));
             }
+
             let _ = self.app_handle.emit("model-extraction-completed", model_id);
             let _ = fs::remove_file(&partial_path);
         } else {

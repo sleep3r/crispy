@@ -6,3 +6,15 @@ resolver = "2"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
+
+# NOTE: Cargo only honors `[profile.*]` from the workspace ROOT manifest.
+# This block previously lived in src-tauri/Cargo.toml (a workspace member) where
+# Cargo silently ignored it, so release builds were unoptimized and used
+# panic=unwind. panic=abort is important here: a panic inside a cpal/CoreAudio
+# data callback would otherwise unwind across the C FFI boundary (undefined
+# behavior). Keep this here.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

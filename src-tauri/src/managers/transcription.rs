@@ -10,21 +10,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 use transcribe_rs::{
-    engines::{
-        moonshine::{ModelVariant, MoonshineEngine, MoonshineModelParams},
-        parakeet::{
-            ParakeetEngine, ParakeetInferenceParams, ParakeetModelParams, TimestampGranularity,
-        },
-        whisper::{WhisperEngine, WhisperInferenceParams},
+    onnx::{
+        canary::CanaryModel, cohere::CohereModel, gigaam::GigaAMModel,
+        moonshine::{MoonshineModel, MoonshineVariant},
+        parakeet::ParakeetModel, sense_voice::SenseVoiceModel, Quantization,
     },
-    TranscriptionEngine,
+    whisper_cpp::WhisperEngine,
+    SpeechModel, TranscribeOptions,
 };
 
-enum LoadedEngine {
-    Whisper(WhisperEngine),
-    Parakeet(ParakeetEngine),
-    Moonshine(MoonshineEngine),
-}
+/// All engines expose the unified `SpeechModel` trait in transcribe-rs 0.3, so we
+/// keep a single boxed trait object instead of a per-engine enum.
+type LoadedEngine = Box<dyn SpeechModel>;
 
 pub struct TranscriptionManager {
     engine: Mutex<Option<LoadedEngine>>,
@@ -129,30 +126,43 @@ impl TranscriptionManager {
         }
         let model_path = self.model_manager.get_model_path(model_id)?;
 
-        let loaded = match model_info.engine_type {
-            EngineType::Whisper => {
-                let mut engine = WhisperEngine::new();
-                engine.load_model(&model_path)
-                    .map_err(|e| anyhow::anyhow!("Whisper load failed: {}", e))?;
-                LoadedEngine::Whisper(engine)
-            }
-            EngineType::Parakeet => {
-                let mut engine = ParakeetEngine::new();
-                engine
-                    .load_model_with_params(&model_path, ParakeetModelParams::int8())
-                    .map_err(|e| anyhow::anyhow!("Parakeet load failed: {}", e))?;
-                LoadedEngine::Parakeet(engine)
-            }
-            EngineType::Moonshine => {
-                let mut engine = MoonshineEngine::new();
-                engine
-                    .load_model_with_params(
-                        &model_path,
-                        MoonshineModelParams::variant(ModelVariant::Base),
-                    )
-                    .map_err(|e| anyhow::anyhow!("Moonshine load failed: {}", e))?;
-                LoadedEngine::Moonshine(engine)
-            }
+        // ONNX dir models are quantized variants (model.int8.onnx) except the few
+        // shipped as FP32; pick the quantization from the filename convention.
+        let quant = if model_info.filename.contains("int8") {
+            Quantization::Int8
+        } else {
+            Quantization::FP32
+        };
+
+        let loaded: LoadedEngine = match model_info.engine_type {
+            EngineType::Whisper => Box::new(
+                WhisperEngine::load(&model_path)
+                    .map_err(|e| anyhow::anyhow!("Whisper load failed: {}", e))?,
+            ),
+            EngineType::Parakeet => Box::new(
+                ParakeetModel::load(&model_path, &quant)
+                    .map_err(|e| anyhow::anyhow!("Parakeet load failed: {}", e))?,
+            ),
+            EngineType::Moonshine => Box::new(
+                MoonshineModel::load(&model_path, MoonshineVariant::Base, &quant)
+                    .map_err(|e| anyhow::anyhow!("Moonshine load failed: {}", e))?,
+            ),
+            EngineType::GigaAM => Box::new(
+                GigaAMModel::load(&model_path, &quant)
+                    .map_err(|e| anyhow::anyhow!("GigaAM load failed: {}", e))?,
+            ),
+            EngineType::SenseVoice => Box::new(
+                SenseVoiceModel::load(&model_path, &quant)
+                    .map_err(|e| anyhow::anyhow!("SenseVoice load failed: {}", e))?,
+            ),
+            EngineType::Canary => Box::new(
+                CanaryModel::load(&model_path, &quant)
+                    .map_err(|e| anyhow::anyhow!("Canary load failed: {}", e))?,
+            ),
+            EngineType::Cohere => Box::new(
+                CohereModel::load(&model_path, &quant)
+                    .map_err(|e| anyhow::anyhow!("Cohere load failed: {}", e))?,
+            ),
         };
 
         *self.engine.lock().unwrap() = Some(loaded);
@@ -170,23 +180,9 @@ impl TranscriptionManager {
             anyhow::anyhow!("Model not loaded. Select and load a model first.")
         })?;
 
-        let result = match engine {
-            LoadedEngine::Whisper(e) => e
-                .transcribe_samples(audio, Some(WhisperInferenceParams::default()))
-                .map_err(|x| anyhow::anyhow!("Whisper: {}", x))?,
-            LoadedEngine::Parakeet(e) => e
-                .transcribe_samples(
-                    audio,
-                    Some(ParakeetInferenceParams {
-                        timestamp_granularity: TimestampGranularity::Segment,
-                        ..Default::default()
-                    }),
-                )
-                .map_err(|x| anyhow::anyhow!("Parakeet: {}", x))?,
-            LoadedEngine::Moonshine(e) => e
-                .transcribe_samples(audio, None)
-                .map_err(|x| anyhow::anyhow!("Moonshine: {}", x))?,
-        };
+        let result = engine
+            .transcribe(&audio, &TranscribeOptions::default())
+            .map_err(|x| anyhow::anyhow!("Transcription failed: {}", x))?;
 
         let text = result.text.trim().to_string();
         if text.is_empty() {
@@ -214,23 +210,9 @@ impl TranscriptionManager {
             anyhow::anyhow!("Model not loaded. Select and load a model first.")
         })?;
 
-        let result = match engine {
-            LoadedEngine::Parakeet(e) => e
-                .transcribe_samples(
-                    audio.clone(),
-                    Some(ParakeetInferenceParams {
-                        timestamp_granularity: TimestampGranularity::Word,
-                        ..Default::default()
-                    }),
-                )
-                .map_err(|x| anyhow::anyhow!("Parakeet: {}", x))?,
-            LoadedEngine::Whisper(e) => e
-                .transcribe_samples(audio.clone(), Some(WhisperInferenceParams::default()))
-                .map_err(|x| anyhow::anyhow!("Whisper: {}", x))?,
-            LoadedEngine::Moonshine(e) => e
-                .transcribe_samples(audio.clone(), None)
-                .map_err(|x| anyhow::anyhow!("Moonshine: {}", x))?,
-        };
+        let result = engine
+            .transcribe(&audio, &TranscribeOptions::default())
+            .map_err(|x| anyhow::anyhow!("Transcription failed: {}", x))?;
 
         let text = result.text.trim().to_string();
         if text.is_empty() {

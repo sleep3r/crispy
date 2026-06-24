@@ -1,20 +1,22 @@
-// Speaker diarization using pyannote-rs.
-// Two ONNX models: segmentation + speaker embedding.
+// Speaker diarization. Two ONNX models (pyannote segmentation-3.0 + WeSpeaker CAM++),
+// both run on the in-tree `ort` rc.12 runtime — no pyannote-rs dependency.
 //
-// Improvements over naive approach:
-// - Binary VAD (Speech vs Silence) avoids false cuts on local speaker label changes.
-// - State is maintained across 10s window boundaries to avoid artificial cuts.
-// - Adjacent speech segments with < 0.5s gaps are merged before embeddings.
-// - Segments shorter than 1.5s are filtered out to avoid noisy CAM++ embeddings.
-// - Agglomerative Hierarchical Clustering (AHC) handles global speaker matching.
-// - Adaptive noise filtering prevents deleting valid rare speakers.
-// - Overlap-based text alignment assigns un-embedded short words dynamically.
+// Pipeline:
+// - Binary powerset VAD (segmentation-3.0) -> continuous speech segments (silence-cut).
+// - Segments chunked to ~4s, <1.5s discarded, CAM++ embedding per chunk.
+// - NME-SC spectral clustering AUTO-estimates the speaker count (eigengap) — no manual
+//   distance threshold and no hard max_speakers force-merge (max_speakers is an upper
+//   bound on the search only).
+// - Chronological speaker IDs; overlap-based word->speaker alignment downstream.
 
 use anyhow::{bail, Context, Result};
 use log::info;
 use ndarray::{Array1, Axis, IxDyn};
-use ort::{session::Session, value::TensorRef};
-use pyannote_rs::EmbeddingExtractor;
+use ort::{
+    session::Session,
+    value::{Tensor, TensorRef},
+};
+use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -29,6 +31,47 @@ struct VadSegment {
     start: f64,
     end: f64,
     samples: Vec<i16>,
+}
+
+/// WeSpeaker CAM++ speaker-embedding extractor on the in-tree ort rc.12 runtime.
+/// Ported from pyannote-rs's 43-line EmbeddingExtractor so we no longer depend on the
+/// (ort rc.10-pinned, rc.12-incompatible) crate. Same model file and tensor names
+/// ("feats" in, "embs" out); features via knf-rs (kaldi-native-fbank, no ort dep).
+struct EmbeddingExtractor {
+    session: Session,
+}
+
+impl EmbeddingExtractor {
+    fn new(model_path: &Path) -> Result<Self> {
+        let session = Session::builder()
+            .context("ort: Session::builder failed")?
+            .commit_from_file(model_path)
+            .context("ort: failed to load embedding model")?;
+        Ok(Self { session })
+    }
+
+    fn compute(&mut self, samples: &[i16]) -> Result<Vec<f32>> {
+        let mut samples_f32 = vec![0.0f32; samples.len()];
+        knf_rs::convert_integer_to_float_audio(samples, &mut samples_f32);
+
+        // knf-rs returns an ndarray-0.16 Array2; rebuild it as an ndarray-0.17 Array3
+        // (with the batch dim) via raw data, so the type matches the ndarray version that
+        // ort's `ndarray` feature uses in this crate (0.17).
+        let fbank =
+            knf_rs::compute_fbank(&samples_f32).map_err(|e| anyhow::anyhow!("fbank: {e:?}"))?;
+        let (frames, mels) = fbank.dim();
+        let flat: Vec<f32> = fbank.iter().copied().collect();
+        let features = ndarray::Array3::<f32>::from_shape_vec((1, frames, mels), flat)?;
+
+        let outputs = self
+            .session
+            .run(ort::inputs!["feats" => Tensor::from_array(features)?])?;
+        let (_shape, data) = outputs
+            .get("embs")
+            .context("embedding output 'embs' not found")?
+            .try_extract_tensor::<f32>()?;
+        Ok(data.to_vec())
+    }
 }
 
 /// Improved VAD segmentation via pyannote segmentation-3.0
@@ -243,6 +286,11 @@ pub fn run_diarization(
         bail!("Requires 16kHz mono.");
     }
 
+    // Guard against misconfiguration: the Phase-3 force-merge loop does a double
+    // `clusters.remove()` per iteration and panics (index out of bounds) if it is
+    // ever asked to merge down to fewer than 1 cluster. Clamp to a sane minimum.
+    let max_speakers = max_speakers.max(1);
+
     let duration_secs = samples_i16.len() as f64 / sample_rate as f64;
     eprintln!(
         "[diarization] input: {} samples, {}Hz, {:.1}s",
@@ -257,7 +305,7 @@ pub fn run_diarization(
         return Ok(Vec::new());
     }
 
-    let mut extractor = EmbeddingExtractor::new(embedding_model_path.to_str().unwrap_or(""))
+    let mut extractor = EmbeddingExtractor::new(embedding_model_path)
         .map_err(|e| anyhow::anyhow!("Failed to load embedding model: {:?}", e))?;
 
     // Chunk long monologues into ~4 second parts.
@@ -294,7 +342,7 @@ pub fn run_diarization(
 
     for segment in chunked_segments {
         if let Ok(embedding) = extractor.compute(&segment.samples) {
-            valid_embeddings.push(embedding.collect::<Vec<f32>>());
+            valid_embeddings.push(embedding);
             valid_segments.push(segment);
         }
     }
@@ -303,162 +351,24 @@ pub fn run_diarization(
         return Ok(Vec::new());
     }
 
-    // Agglomerative Hierarchical Clustering (Average Linkage)
+    // Cluster the chunk embeddings into speakers with NME-SC: spectral clustering with
+    // AUTOMATIC speaker-count estimation via the normalized maximum eigengap
+    // (Park et al. 2019, arXiv:2003.02405). Replaces the old AHC — there is no distance
+    // threshold, and max_speakers is only an upper bound on the eigengap search.
     let n = valid_embeddings.len();
+    let _ = threshold; // obsolete with spectral auto-count; kept for signature compatibility
     eprintln!(
-        "[diarization] AHC: {} valid speech chunks, threshold={}, max_speakers={}",
-        n, threshold, max_speakers
+        "[diarization] NME-SC over {} speech chunks (max_speakers <= {})",
+        n, max_speakers
     );
-    let mut clusters: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
-    let mut dist_matrix = vec![vec![0.0f32; n]; n];
 
-    for i in 0..n {
-        for j in (i + 1)..n {
-            let dist = cosine_distance(&valid_embeddings[i], &valid_embeddings[j]);
-            dist_matrix[i][j] = dist;
-            dist_matrix[j][i] = dist;
-        }
-    }
-
-    // Phase 1: Merge clusters while min distance is below threshold
-    loop {
-        if clusters.len() <= 1 {
-            break;
-        }
-
-        let mut min_dist = f32::MAX;
-        let mut merge_pair = (0, 0);
-        let k = clusters.len();
-
-        for i in 0..k {
-            for j in (i + 1)..k {
-                let mut sum_dist = 0.0;
-                let cl_i = &clusters[i];
-                let cl_j = &clusters[j];
-                for &u in cl_i {
-                    for &v in cl_j {
-                        sum_dist += dist_matrix[u][v];
-                    }
-                }
-                let avg_dist = sum_dist / (cl_i.len() * cl_j.len()) as f32;
-                if avg_dist < min_dist {
-                    min_dist = avg_dist;
-                    merge_pair = (i, j);
-                }
-            }
-        }
-
-        if min_dist > threshold as f32 {
-            eprintln!(
-                "[diarization] AHC stopped at {} clusters (min_dist={:.4} > threshold={:.4})",
-                clusters.len(),
-                min_dist,
-                threshold
-            );
-            break;
-        }
-
-        let (i, j) = merge_pair;
-        let mut merged = clusters[i].clone();
-        merged.extend(clusters[j].iter().copied());
-        clusters.remove(j); // j is always > i
-        clusters.remove(i);
-        clusters.push(merged);
-    }
-
-    // Phase 2: Handle Outliers (Tiny clusters)
-    // ONLY delete tiny clusters if we have exceeded max_speakers.
-    // This preserves real speakers who simply didn't speak a lot.
-    if clusters.len() > max_speakers {
-        let mut min_cluster_size = (n as f64 * 0.02).ceil() as usize;
-        min_cluster_size = min_cluster_size.max(2);
-
-        let mut real_clusters: Vec<Vec<usize>> = Vec::new();
-        let mut noise_indices: Vec<usize> = Vec::new();
-
-        for cluster in &clusters {
-            if cluster.len() >= min_cluster_size {
-                real_clusters.push(cluster.clone());
-            } else {
-                noise_indices.extend(cluster.iter());
-            }
-        }
-
-        // If no real clusters, keep the largest one
-        if real_clusters.is_empty() {
-            clusters.sort_by(|a, b| b.len().cmp(&a.len()));
-            real_clusters.push(clusters[0].clone());
-            noise_indices.clear();
-            for cluster in clusters.iter().skip(1) {
-                noise_indices.extend(cluster.iter());
-            }
-        }
-
-        // Reassign noise segments to the nearest real cluster
-        for &idx in &noise_indices {
-            let mut best_cluster = 0;
-            let mut best_dist = f32::MAX;
-            for (ci, cluster) in real_clusters.iter().enumerate() {
-                let avg_dist: f32 = cluster
-                    .iter()
-                    .map(|&c| dist_matrix[idx][c])
-                    .sum::<f32>()
-                    / cluster.len() as f32;
-                if avg_dist < best_dist {
-                    best_dist = avg_dist;
-                    best_cluster = ci;
-                }
-            }
-            real_clusters[best_cluster].push(idx);
-        }
-        clusters = real_clusters;
-    }
-
-    // Phase 3: Force merge down to max_speakers if still exceeding
-    while clusters.len() > max_speakers {
-        let mut min_dist = f32::MAX;
-        let mut merge_pair = (0, 0);
-        let k = clusters.len();
-        for i in 0..k {
-            for j in (i + 1)..k {
-                let mut sum_dist = 0.0;
-                for &u in &clusters[i] {
-                    for &v in &clusters[j] {
-                        sum_dist += dist_matrix[u][v];
-                    }
-                }
-                let avg_dist = sum_dist / (clusters[i].len() * clusters[j].len()) as f32;
-                if avg_dist < min_dist {
-                    min_dist = avg_dist;
-                    merge_pair = (i, j);
-                }
-            }
-        }
-        let (i, j) = merge_pair;
-        let mut merged = clusters[i].clone();
-        merged.extend(clusters[j].iter().copied());
-        clusters.remove(j);
-        clusters.remove(i);
-        clusters.push(merged);
-    }
-
-    // Log cluster distribution
-    for (ci, cluster) in clusters.iter().enumerate() {
-        eprintln!(
-            "[diarization] cluster {}: {} segments ({:.1}%)",
-            ci,
-            cluster.len(),
-            cluster.len() as f64 / n as f64 * 100.0
-        );
-    }
-
-    // Chronological speaker ID assignment (first to speak = "Speaker 1")
-    let mut segment_labels = vec![0; n];
-    for (cluster_id, cluster) in clusters.iter().enumerate() {
-        for &idx in cluster {
-            segment_labels[idx] = cluster_id;
-        }
-    }
+    // Chronological speaker ID assignment (first to speak = "Speaker 1") happens below;
+    // here we just get a raw label per chunk.
+    let segment_labels: Vec<usize> = if n <= 2 {
+        vec![0; n]
+    } else {
+        nme_sc(&valid_embeddings, max_speakers)
+    };
 
     let mut appearance_order = Vec::new();
     for &lbl in &segment_labels {
@@ -496,6 +406,208 @@ pub fn run_diarization(
     );
     info!("Diarization complete: {} segments", merged.len());
     Ok(merged)
+}
+
+/// Cosine similarity in [0, 1].
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    (1.0 - cosine_distance(a, b)).clamp(0.0, 1.0)
+}
+
+fn sq_dist(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
+}
+
+/// Keep the `p` largest neighbours per row, symmetrize (max), and return the symmetric
+/// normalized graph Laplacian L = I - D^-1/2 A D^-1/2 as an N×N matrix.
+fn pruned_normalized_laplacian(aff: &[Vec<f32>], p: usize) -> Vec<Vec<f32>> {
+    let n = aff.len();
+    let mut a = vec![vec![0.0f32; n]; n];
+    for i in 0..n {
+        let mut order: Vec<usize> = (0..n).filter(|&j| j != i).collect();
+        order.sort_by(|&x, &y| {
+            aff[i][y]
+                .partial_cmp(&aff[i][x])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for &j in order.iter().take(p.min(n.saturating_sub(1))) {
+            a[i][j] = aff[i][j];
+        }
+    }
+    // symmetrize by max
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let m = a[i][j].max(a[j][i]);
+            a[i][j] = m;
+            a[j][i] = m;
+        }
+    }
+    let dinv: Vec<f32> = (0..n)
+        .map(|i| 1.0 / a[i].iter().sum::<f32>().max(1e-9).sqrt())
+        .collect();
+    let mut l = vec![vec![0.0f32; n]; n];
+    for i in 0..n {
+        for j in 0..n {
+            let norm_a = dinv[i] * a[i][j] * dinv[j];
+            l[i][j] = if i == j { 1.0 - norm_a } else { -norm_a };
+        }
+    }
+    l
+}
+
+/// Number of speakers = position of the largest gap among the smallest eigenvalues of
+/// the normalized Laplacian (k near-zero eigenvalues for k clusters). Returns (k, gap).
+fn max_eigengap(evals_sorted_asc: &[f32], kmax: usize) -> (usize, f32) {
+    let lim = (kmax + 1).min(evals_sorted_asc.len());
+    let mut best_k = 1usize;
+    let mut best_gap = f32::MIN;
+    for i in 1..lim {
+        let gap = evals_sorted_asc[i] - evals_sorted_asc[i - 1];
+        if gap > best_gap {
+            best_gap = gap;
+            best_k = i;
+        }
+    }
+    (best_k.max(1), best_gap.max(0.0))
+}
+
+/// Deterministic k-means (k-means++ farthest-point seeding) over spectral rows.
+fn kmeans(points: &[Vec<f32>], k: usize) -> Vec<usize> {
+    let n = points.len();
+    if k <= 1 || n == 0 {
+        return vec![0; n];
+    }
+    if k >= n {
+        return (0..n).collect();
+    }
+    let dim = points[0].len();
+    let mut centers: Vec<Vec<f32>> = vec![points[0].clone()];
+    while centers.len() < k {
+        let mut best_i = 0usize;
+        let mut best_d = -1.0f32;
+        for (i, pt) in points.iter().enumerate() {
+            let d = centers.iter().map(|c| sq_dist(pt, c)).fold(f32::MAX, f32::min);
+            if d > best_d {
+                best_d = d;
+                best_i = i;
+            }
+        }
+        centers.push(points[best_i].clone());
+    }
+    let mut labels = vec![0usize; n];
+    for _ in 0..50 {
+        let mut changed = false;
+        for (i, pt) in points.iter().enumerate() {
+            let mut bc = 0usize;
+            let mut bd = f32::MAX;
+            for (c, ctr) in centers.iter().enumerate() {
+                let d = sq_dist(pt, ctr);
+                if d < bd {
+                    bd = d;
+                    bc = c;
+                }
+            }
+            if labels[i] != bc {
+                labels[i] = bc;
+                changed = true;
+            }
+        }
+        let mut sums = vec![vec![0.0f32; dim]; k];
+        let mut counts = vec![0usize; k];
+        for (i, pt) in points.iter().enumerate() {
+            counts[labels[i]] += 1;
+            for d in 0..dim {
+                sums[labels[i]][d] += pt[d];
+            }
+        }
+        for c in 0..k {
+            if counts[c] > 0 {
+                for d in 0..dim {
+                    centers[c][d] = sums[c][d] / counts[c] as f32;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    labels
+}
+
+/// NME-SC spectral clustering with automatic speaker-count estimation
+/// (Park et al. 2019, arXiv:2003.02405). Sweeps the affinity-pruning parameter p,
+/// picks the p minimising (p/n)/max_eigengap, reads the speaker count k off the eigengap,
+/// then runs k-means in the k-dim spectral embedding. No manual threshold; max_speakers
+/// is only an upper bound on the search.
+fn nme_sc(embeddings: &[Vec<f32>], max_speakers: usize) -> Vec<usize> {
+    use nalgebra::{DMatrix, SymmetricEigen};
+    let n = embeddings.len();
+    if n == 0 {
+        return vec![];
+    }
+    if n <= 2 {
+        return vec![0; n];
+    }
+    let kmax = max_speakers.max(1).min(n - 1);
+
+    // Full cosine-similarity affinity (zero diagonal).
+    let mut aff = vec![vec![0.0f32; n]; n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let s = cosine_similarity(&embeddings[i], &embeddings[j]);
+            aff[i][j] = s;
+            aff[j][i] = s;
+        }
+    }
+
+    let eigvals_for = |p: usize| -> Vec<f32> {
+        let lap = pruned_normalized_laplacian(&aff, p);
+        let m = DMatrix::<f32>::from_fn(n, n, |i, j| lap[i][j]);
+        let mut ev: Vec<f32> = SymmetricEigen::new(m).eigenvalues.iter().copied().collect();
+        ev.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        ev
+    };
+
+    // Sweep p; pick the one minimising (p/n)/max_eigengap (the NME criterion).
+    let p_max = (n - 1).min(((n as f64).sqrt() as usize).max(2) * 2);
+    let mut best: Option<(f32, usize, usize)> = None; // (ratio, p, k)
+    for p in 1..=p_max {
+        let ev = eigvals_for(p);
+        let (k, gap) = max_eigengap(&ev, kmax);
+        let ratio = (p as f32 / n as f32) / gap.max(1e-6);
+        if best.map_or(true, |(r, _, _)| ratio < r) {
+            best = Some((ratio, p, k));
+        }
+    }
+    let (_, p_star, k) = best.unwrap_or((0.0, 1, 1));
+    let k = k.max(1).min(kmax);
+    eprintln!("[diarization] NME-SC: p*={}, estimated speakers={}", p_star, k);
+    if k <= 1 {
+        return vec![0; n];
+    }
+
+    // Spectral embedding at p*: the k eigenvectors with the smallest eigenvalues.
+    let lap = pruned_normalized_laplacian(&aff, p_star);
+    let m = DMatrix::<f32>::from_fn(n, n, |i, j| lap[i][j]);
+    let eig = SymmetricEigen::new(m);
+    let mut idx: Vec<usize> = (0..n).collect();
+    idx.sort_by(|&a, &b| {
+        eig.eigenvalues[a]
+            .partial_cmp(&eig.eigenvalues[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut spectral = vec![vec![0.0f32; k]; n];
+    for row in 0..n {
+        for c in 0..k {
+            spectral[row][c] = eig.eigenvectors[(row, idx[c])];
+        }
+        let norm: f32 = spectral[row].iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 1e-9 {
+            for c in 0..k {
+                spectral[row][c] /= norm;
+            }
+        }
+    }
+    kmeans(&spectral, k)
 }
 
 fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
@@ -614,6 +726,60 @@ fn find_speaker_at_time(time: f64, segments: &[SpeakerSegment]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    // --- nme_sc (automatic speaker-count spectral clustering) ---
+
+    /// Synthetic embeddings: each cluster points along a distinct axis (so cross-cluster
+    /// cosine similarity ~ 0, within-cluster ~ 1), with tiny per-point jitter to avoid
+    /// exact degeneracy.
+    fn cluster_emb(centers: &[usize], per: usize, dim: usize) -> Vec<Vec<f32>> {
+        let mut out = Vec::new();
+        for (ci, &c) in centers.iter().enumerate() {
+            for p in 0..per {
+                let mut v = vec![0.0f32; dim];
+                v[c] = 1.0;
+                v[dim - 1] += 0.01 * (ci as f32 + 1.0) + 0.001 * p as f32;
+                out.push(v);
+            }
+        }
+        out
+    }
+
+    fn distinct(labels: &[usize]) -> usize {
+        labels.iter().copied().collect::<HashSet<_>>().len()
+    }
+
+    #[test]
+    fn nme_sc_detects_two_speakers() {
+        let labels = nme_sc(&cluster_emb(&[0, 1], 5, 6), 8);
+        assert_eq!(distinct(&labels), 2, "labels={:?}", labels);
+    }
+
+    #[test]
+    fn nme_sc_detects_three_speakers() {
+        let labels = nme_sc(&cluster_emb(&[0, 1, 2], 5, 6), 8);
+        assert_eq!(distinct(&labels), 3, "labels={:?}", labels);
+    }
+
+    #[test]
+    fn nme_sc_single_speaker() {
+        let labels = nme_sc(&cluster_emb(&[0], 6, 6), 8);
+        assert_eq!(distinct(&labels), 1, "labels={:?}", labels);
+    }
+
+    #[test]
+    fn nme_sc_trivial_small_input() {
+        assert_eq!(nme_sc(&[vec![1.0, 0.0]], 8), vec![0]);
+        assert_eq!(nme_sc(&[vec![1.0, 0.0], vec![0.0, 1.0]], 8), vec![0, 0]);
+    }
+
+    #[test]
+    fn nme_sc_respects_max_speakers_upper_bound() {
+        // 3 real clusters but capped at 2 -> at most 2 labels.
+        let labels = nme_sc(&cluster_emb(&[0, 1, 2], 5, 6), 2);
+        assert!(distinct(&labels) <= 2, "labels={:?}", labels);
+    }
 
     // --- f32_to_i16 ---
 

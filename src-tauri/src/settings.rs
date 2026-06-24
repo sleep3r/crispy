@@ -3,7 +3,12 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
+
+/// Serializes the read-modify-write cycle for the settings file so concurrent
+/// `set_app_setting` / `set_llm_settings` commands can't lose each other's writes.
+static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmSettings {
@@ -47,7 +52,8 @@ fn default_false_string() -> String {
 }
 
 fn default_diarization_max_speakers() -> String {
-    "3".to_string()
+    // Upper bound for NME-SC's automatic speaker-count estimation (not a hard target).
+    "6".to_string()
 }
 
 fn default_diarization_threshold() -> String {
@@ -69,7 +75,7 @@ impl Default for AppSettings {
             selected_recording_app: "none".to_string(),
             autostart_enabled: "false".to_string(),
             diarization_enabled: "false".to_string(),
-            diarization_max_speakers: "3".to_string(),
+            diarization_max_speakers: "6".to_string(),
             diarization_threshold: "0.50".to_string(),
             diarization_merge_gap: "2.5".to_string(),
         }
@@ -159,13 +165,22 @@ fn load_settings_file(app: &AppHandle) -> Result<SettingsFile> {
             app: app_only,
         });
     }
+    // An existing settings file could not be parsed. Preserve it as a .corrupt
+    // backup instead of silently returning defaults and overwriting it on the next
+    // save (which would permanently destroy e.g. the stored LLM api_key).
+    let backup = path.with_extension("json.corrupt");
+    let _ = std::fs::rename(&path, &backup);
     Ok(SettingsFile::default())
 }
 
 fn save_settings_file(app: &AppHandle, settings: &SettingsFile) -> Result<()> {
     let path = settings_file_path(app)?;
     let json = serde_json::to_string_pretty(settings)?;
-    std::fs::write(&path, json)?;
+    // Atomic write: write to a sibling temp file and rename over the target so a
+    // crash / power loss mid-write can't leave a truncated, unparseable file.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &path)?;
     Ok(())
 }
 
@@ -174,6 +189,7 @@ pub fn load_llm_settings(app: &AppHandle) -> Result<LlmSettings> {
 }
 
 pub fn save_llm_settings(app: &AppHandle, settings: &LlmSettings) -> Result<()> {
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut file = load_settings_file(app)?;
     file.llm = settings.clone();
     save_settings_file(app, &file)
@@ -183,14 +199,14 @@ pub fn load_app_settings(app: &AppHandle) -> Result<AppSettings> {
     Ok(load_settings_file(app)?.app)
 }
 
-pub fn save_app_settings(app: &AppHandle, settings: &AppSettings) -> Result<()> {
-    let mut file = load_settings_file(app)?;
-    file.app = settings.clone();
-    save_settings_file(app, &file)
-}
-
 pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<()> {
-    let mut settings = load_app_settings(app)?;
+    // Hold the lock across the whole load-modify-save so concurrent updates to
+    // different keys don't clobber each other (lost update). Operate on the full
+    // settings file directly (not via a separate locking save helper) to avoid a
+    // non-reentrant double-lock.
+    let _guard = SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut file = load_settings_file(app)?;
+    let settings = &mut file.app;
     match key {
         "selected_microphone" => settings.selected_microphone = value,
         "selected_output_device" => settings.selected_output_device = value,
@@ -205,7 +221,7 @@ pub fn update_app_setting(app: &AppHandle, key: &str, value: String) -> Result<(
         "diarization_merge_gap" => settings.diarization_merge_gap = value,
         _ => return Err(anyhow::anyhow!("Unknown setting key: {}", key)),
     }
-    save_app_settings(app, &settings)
+    save_settings_file(app, &file)
 }
 
 #[cfg(test)]
@@ -231,7 +247,7 @@ mod tests {
         assert_eq!(settings.selected_recording_app, "none");
         assert_eq!(settings.autostart_enabled, "false");
         assert_eq!(settings.diarization_enabled, "false");
-        assert_eq!(settings.diarization_max_speakers, "3");
+        assert_eq!(settings.diarization_max_speakers, "6");
         assert_eq!(settings.diarization_threshold, "0.50");
         assert_eq!(settings.diarization_merge_gap, "2.5");
     }
@@ -312,7 +328,7 @@ mod tests {
         // Missing fields should get defaults
         assert_eq!(settings.autostart_enabled, "false");
         assert_eq!(settings.diarization_enabled, "false");
-        assert_eq!(settings.diarization_max_speakers, "3");
+        assert_eq!(settings.diarization_max_speakers, "6");
         assert_eq!(settings.diarization_threshold, "0.50");
         assert_eq!(settings.diarization_merge_gap, "2.5");
     }

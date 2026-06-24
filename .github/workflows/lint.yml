@@ -7,12 +7,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
 
+      # The repo has no bun lockfile, so --frozen-lockfile (used previously) always
+      # failed. Plain `bun install` matches the build workflow.
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install
 
-      - name: Run ESLint
+      - name: Typecheck
         run: bun run lint
+
+      - name: Unit tests
+        run: bun run test

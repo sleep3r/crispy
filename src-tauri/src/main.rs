@@ -393,7 +393,6 @@ fn main() {
             commands::recording::get_recordings,
             commands::recording::rename_recording,
             commands::recording::delete_recording,
-            commands::recording::read_recording_file,
             commands::models::get_available_models,
             commands::ns_models::get_available_ns_models,
             commands::models::get_model_info,

@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use base64::Engine;
 use tauri::AppHandle;
 
 use crate::app_state::AppState;
@@ -22,6 +21,23 @@ fn recordings_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = crate::paths::recordings_dir(app)?;
     crate::paths::ensure_dir(&dir)?;
     Ok(dir)
+}
+
+/// Reject any path supplied over IPC that does not resolve to an existing file
+/// inside the recordings directory. Defends destructive/read commands against a
+/// compromised or buggy frontend asking to touch arbitrary files on disk.
+fn ensure_in_recordings_dir(app: &AppHandle, path: &Path) -> Result<(), String> {
+    let dir = recordings_dir(app)?;
+    let canon_dir = dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve recordings directory: {}", e))?;
+    let canon = path
+        .canonicalize()
+        .map_err(|_| "Recording not found".to_string())?;
+    if !canon.starts_with(&canon_dir) {
+        return Err("Path is outside the recordings directory".to_string());
+    }
+    Ok(())
 }
 
 pub fn do_start_recording(
@@ -523,6 +539,7 @@ pub fn rename_recording(app: tauri::AppHandle, path: String, new_name: String) -
     if !path.exists() {
         return Err("Recording not found".to_string());
     }
+    ensure_in_recordings_dir(&app, path)?;
     let parent = path.parent().ok_or("Invalid path")?;
     let new_name = new_name.trim();
     if new_name.is_empty() {
@@ -577,17 +594,11 @@ pub fn rename_recording(app: tauri::AppHandle, path: String, new_name: String) -
 }
 
 #[tauri::command]
-pub fn delete_recording(path: String) -> Result<(), String> {
+pub fn delete_recording(app: AppHandle, path: String) -> Result<(), String> {
+    ensure_in_recordings_dir(&app, Path::new(&path))?;
     std::fs::remove_file(&path)
         .map_err(|e| format!("Failed to delete recording: {}", e))?;
     Ok(())
-}
-
-#[tauri::command]
-pub fn read_recording_file(path: String) -> Result<String, String> {
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("Failed to read recording: {}", e))?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
 #[cfg(test)]

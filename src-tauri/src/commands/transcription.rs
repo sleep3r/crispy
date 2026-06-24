@@ -111,12 +111,22 @@ fn run_transcription(
         return Err("No transcription model selected. Choose a model in the bottom left corner.".into());
     }
 
-    // Load diarization settings
+    // Load diarization settings. Diarization is feature-gated (pyannote-rs is
+    // currently incompatible with ort rc.12); when the feature is off it is forced
+    // off so the rest of the pipeline produces a plain transcript.
+    #[cfg(feature = "diarization")]
     let app_settings = crate::settings::load_app_settings(app).unwrap_or_default();
+    #[cfg(feature = "diarization")]
     let diarization_enabled = app_settings.diarization_enabled == "true";
+    #[cfg(not(feature = "diarization"))]
+    let diarization_enabled = false;
+    #[cfg(feature = "diarization")]
     let diarization_max_speakers: usize = app_settings.diarization_max_speakers.parse().unwrap_or(3);
+    #[cfg(feature = "diarization")]
     let diarization_threshold: f64 = app_settings.diarization_threshold.parse().unwrap_or(0.50);
+    #[cfg(feature = "diarization")]
     let diarization_merge_gap: f64 = app_settings.diarization_merge_gap.parse().unwrap_or(2.5);
+    #[cfg(feature = "diarization")]
     eprintln!(
         "[transcription] diarization: enabled={}, max_speakers={}, threshold={}, merge_gap={}",
         diarization_enabled, diarization_max_speakers, diarization_threshold, diarization_merge_gap
@@ -393,7 +403,8 @@ fn run_transcription(
         return Ok(());
     }
 
-    // Run diarization if enabled
+    // Run diarization if enabled (feature-gated; see diarization_enabled above).
+    #[cfg(feature = "diarization")]
     let text = if diarization_enabled && !all_audio_16k.is_empty() {
         let _ = app.emit(
             "transcription-phase",
@@ -454,6 +465,13 @@ fn run_transcription(
             }
         }
     } else {
+        parts.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>().join(" ")
+    };
+
+    // Diarization feature disabled: always emit a plain transcript.
+    #[cfg(not(feature = "diarization"))]
+    let text = {
+        let _ = &all_audio_16k;
         parts.iter().map(|(_, _, t)| t.as_str()).collect::<Vec<_>>().join(" ")
     };
 

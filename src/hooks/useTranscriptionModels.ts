@@ -281,12 +281,24 @@ export function useTranscriptionModels() {
       try {
         await invoke("download_model", { modelId });
       } catch (e) {
-        setPendingDownloads((prev) => {
-          if (!(modelId in prev)) return prev;
-          const next = { ...prev };
+        // Clear ALL transient state for this model, not just pending. A download
+        // or extraction failure must never leave the UI stuck in a spinner /
+        // "extracting" state with no way out.
+        const drop = (obj: Record<string, unknown>) => {
+          if (!(modelId in obj)) return obj;
+          const next = { ...obj };
           delete next[modelId];
           return next;
-        });
+        };
+        setPendingDownloads((prev) => drop(prev) as Record<string, true>);
+        setDownloadProgress((prev) => drop(prev) as Record<string, DownloadProgressPayload>);
+        setDownloadStats((prev) => drop(prev) as Record<string, DownloadStats>);
+        setExtractingModels((prev) => drop(prev) as Record<string, true>);
+        setModelStatus((prevStatus) =>
+          prevStatus === "downloading" || prevStatus === "extracting"
+            ? "error"
+            : prevStatus
+        );
         console.error("download_model failed:", e);
         throw e;
       }

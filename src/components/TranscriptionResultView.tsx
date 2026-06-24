@@ -473,6 +473,21 @@ export const TranscriptionResultView: React.FC = () => {
     return unique.size;
   }, [messages]);
 
+  /**
+   * The transcription is messages[0] and never changes while chatting. Memoize its
+   * (potentially expensive) parse/render on the content alone so it is NOT recomputed
+   * for the whole transcript on every chat-stream delta.
+   */
+  const firstContent = messages[0]?.content ?? "";
+  const transcriptionNode = useMemo(() => {
+    if (!firstContent) return null;
+    return hasSpeakerLabels ? (
+      renderMeetingTranscript(firstContent)
+    ) : (
+      <div className="whitespace-pre-wrap break-words leading-relaxed">{firstContent}</div>
+    );
+  }, [firstContent, hasSpeakerLabels]);
+
   if (loading) {
     return (
       <div className="h-screen flex flex-col bg-background text-text">
@@ -537,13 +552,10 @@ export const TranscriptionResultView: React.FC = () => {
               <div className="relative w-full rounded-xl bg-mid-gray/[0.06] border border-mid-gray/[0.08] px-4 py-3 text-[13px] group">
                 <div className={msg.name ? "pr-8" : ""}>
                   {(() => {
-                    // First message with speaker labels - use meeting transcript renderer
-                    if (i === 0 && hasSpeakerLabels) {
-                      return renderMeetingTranscript(msg.content);
-                    }
-                    // First message without speaker labels - plain text (transcription)
+                    // First message is the transcription — use the memoized node so it
+                    // isn't re-parsed on every chat-stream delta.
                     if (i === 0) {
-                      return <div className="whitespace-pre-wrap break-words leading-relaxed">{msg.content}</div>;
+                      return transcriptionNode;
                     }
                     // LLM chat responses - use Markdown renderer
                     if (msg.content) {

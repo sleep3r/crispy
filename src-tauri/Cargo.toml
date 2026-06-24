@@ -1,6 +1,6 @@
 [package]
 name = "Crispy"
-version = "0.6.7"
+version = "0.7.0"
 description = "Crispy"
 authors = ["you"]
 edition = "2021"
@@ -27,19 +27,33 @@ futures-util = "0.3"
 flate2 = "1.0"
 tar = "0.4"
 rubato = "0.16"
-transcribe-rs = { version = "0.2.2", features = ["whisper", "parakeet", "moonshine"] }
+# 0.3.x unified SpeechModel API; "onnx" enables Parakeet/Moonshine/GigaAM/SenseVoice/
+# Canary/Cohere, "whisper-cpp" the CPU whisper.cpp backend. Requires ort rc.12.
+transcribe-rs = { version = "0.3.11", features = ["whisper-cpp", "onnx"] }
 log = "0.4"
 urlencoding = "2"
 async-openai = "0.28"
 tokio = { version = "1", features = ["full"] }
-ort = "=2.0.0-rc.10"
-ort-sys = "=2.0.0-rc.10"
+# Bumped rc.10 -> rc.12 to match transcribe-rs 0.3 (ort-sys `links = "onnxruntime"`
+# forbids two versions in one binary). pyannote-rs uses a caret req and accepts rc.12.
+ort = { version = "=2.0.0-rc.12", features = ["ndarray"] }
+ort-sys = "=2.0.0-rc.12"
 # Noise suppression: RNNoise port (path to ./rnnnoise in project root)
 nnnoiseless = "0.5.2"
-# Speaker diarization
-pyannote-rs = "0.3"
-ndarray = "0.16"
+# Speaker diarization (feature-gated, OFF by default). Runs the segmentation +
+# WeSpeaker CAM++ ONNX models on the IN-TREE ort rc.12 (no more pyannote-rs, which
+# pinned the incompatible ort rc.10). knf-rs = kaldi fbank features (no ort dep);
+# nalgebra = pure-Rust symmetric eigendecomposition for NME-SC spectral clustering.
+knf-rs = { version = "0.3", optional = true }
+nalgebra = { version = "0.33", optional = true }
+ndarray = "0.17"
 eyre = "0.6"
+
+[features]
+# Diarization is ON by default again now that it runs on ort rc.12 (in-house embedding
+# + NME-SC). Build with `--no-default-features` for a leaner binary without it.
+default = ["diarization"]
+diarization = ["dep:knf-rs", "dep:nalgebra"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
@@ -66,8 +80,5 @@ windows62 = { package = "windows", version = "=0.62.2", features = [
 windows-core = "=0.62.2"
 windows-implement = "=0.60.2"
 
-[profile.release]
-lto = true
-codegen-units = 1
-strip = true
-panic = "abort"
+# [profile.release] moved to the workspace ROOT Cargo.toml — Cargo ignores
+# profile settings declared in workspace members.

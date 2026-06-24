@@ -42,8 +42,10 @@ const defaultSettings: SettingsState = {
   selected_recording_app: "none",
   autostart_enabled: "false",
   diarization_enabled: "false",
-  diarization_max_speakers: "3",
-  diarization_threshold: "0.30",
+  diarization_max_speakers: "6",
+  // Must match the Rust default (settings.rs default_diarization_threshold) and
+  // DiarizationToggle DEFAULTS, otherwise reset/first-paint use a different value.
+  diarization_threshold: "0.50",
   diarization_merge_gap: "2.5",
 };
 
