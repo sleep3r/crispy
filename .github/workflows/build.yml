@@ -81,13 +81,13 @@ jobs:
         if: ${{ !(contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64')) }}
         uses: oven-sh/setup-bun@v2
 
-      # Bun does not fully support Windows ARM64 yet, so we pin the baseline build.
-      # See https://github.com/oven-sh/bun/issues/9824 for details.
-      - name: Setup Bun (Windows ARM64 baseline)
+      # Bun does not support Windows ARM64 (oven-sh/bun#9824) — `bun install` fails there.
+      # Use Node/npm on that platform instead; with bun absent, tauri-action auto-detects npm.
+      - name: Setup Node (Windows ARM64)
         if: ${{ contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64') }}
-        uses: oven-sh/setup-bun@v2
+        uses: actions/setup-node@v4
         with:
-          bun-download-url: "https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64-baseline.zip"
+          node-version: 20
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -212,9 +212,9 @@ jobs:
         if: ${{ !(contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64')) }}
         run: bun install
 
-      - name: install frontend dependencies (Windows ARM64)
+      - name: install frontend dependencies (Windows ARM64, npm)
         if: ${{ contains(inputs.platform, 'windows') && contains(inputs.target, 'aarch64') }}
-        run: bun install --cpu=arm64
+        run: npm install
 
       - name: rustup install target
         if: ${{ inputs.target != '' && !contains(inputs.target, 'x86_64-unknown-linux-gnu') && !contains(inputs.target, 'aarch64-unknown-linux-gnu') && !contains(inputs.target, 'x86_64-pc-windows-msvc') }}

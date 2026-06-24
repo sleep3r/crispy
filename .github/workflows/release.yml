@@ -50,12 +50,11 @@ jobs:
             args: "--target aarch64-apple-darwin"
             target: "aarch64-apple-darwin"
             sign: true  # Apple Developer certificate configured
-          - platform: "ubuntu-22.04" # Build AppImage and .deb on 22.04 (AppImage runs on 22.04+)
-            args: "--bundles appimage,deb"
-            target: "x86_64-unknown-linux-gnu"
-            sign: false
-          - platform: "ubuntu-24.04" # Build RPM on 24.04
-            args: "--bundles rpm"
+          # AppImage + .deb + RPM for x86_64 Linux on 24.04. The prebuilt onnxruntime
+          # pulled by ort rc.12 (transcribe-rs 0.3) needs glibc >= 2.38, so ubuntu-22.04
+          # (glibc 2.35) can no longer link it. Linux floor is now glibc 2.38 (Ubuntu 24.04+).
+          - platform: "ubuntu-24.04"
+            args: "--bundles appimage,deb,rpm"
             target: "x86_64-unknown-linux-gnu"
             sign: false
           - platform: "ubuntu-24.04-arm" # Build for ARM64 Linux
