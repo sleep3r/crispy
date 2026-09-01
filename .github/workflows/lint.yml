@@ -22,6 +22,27 @@ jobs:
       - name: Unit tests
         run: bun run test
 
+  # The Rust suite covers the diarization clustering and the audio maths, none of which
+  # the TypeScript jobs touch. Must run with default features on: `--no-default-features`
+  # drops the `diarization` feature and silently skips the NME-SC tests, which is most of
+  # the value here. That means building transcribe-cpp's vendored ggml, so keep the cache.
+  rust-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev cmake
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test
+
   # transcribe-cpp and transcribe-rs's "whisper-cpp" feature each vendor their own
   # ggml (0.20.2 vs 0.9.5) and export the same symbols. Their cargo `links` keys
   # differ, so cargo will happily accept both: the C++ compiles, the binary links,

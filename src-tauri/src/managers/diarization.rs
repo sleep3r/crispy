@@ -568,9 +568,29 @@ fn nme_sc(embeddings: &[Vec<f32>], max_speakers: usize) -> Vec<usize> {
     };
 
     // Sweep p; pick the one minimising (p/n)/max_eigengap (the NME criterion).
+    //
+    // The sweep must not start at p = 1. At p <= 2 the pruned graph of a cluster is a
+    // path: every segment keeps only its one or two nearest neighbours, so one speaker's
+    // segments end up chained rather than mutually connected. A path's normalized
+    // Laplacian carries a large *internal* spectral gap (0.293 -> 1.0 for a 5-node path)
+    // that lands inside the 1..=kmax eigengap window and outranks the gap that actually
+    // separates speakers, so k gets read off the shape of the neighbour graph instead of
+    // off the speaker structure — two 5-segment speakers came back as k = 4, and a
+    // single-speaker dictation as 3 to 6. Nothing else rejects such a p: the NME
+    // numerator p/n grows faster with p (x4 over p = 1..4) than the gap does (x1.77), so
+    // the argmin is pinned to the most degenerate p on offer. p >= 3 is the smallest
+    // floor at which no node of the pruned graph keeps degree <= 2, i.e. at which no
+    // cluster can still be a path.
+    //
+    // Note this is not a departure from the reference: NeMo's p counts the self-loop it
+    // fills into the diagonal, so their p equals our p + 1, and our p = 1 builds a graph
+    // strictly more degenerate than the reference ever constructs.
+    //
+    // Clamped to p_max so tiny inputs (p_max is 2 at n = 3) keep a non-empty range.
     let p_max = (n - 1).min(((n as f64).sqrt() as usize).max(2) * 2);
+    let p_min = 3.min(p_max);
     let mut best: Option<(f32, usize, usize)> = None; // (ratio, p, k)
-    for p in 1..=p_max {
+    for p in p_min..=p_max {
         let ev = eigvals_for(p);
         let (k, gap) = max_eigengap(&ev, kmax);
         let ratio = (p as f32 / n as f32) / gap.max(1e-6);
@@ -748,6 +768,114 @@ mod tests {
 
     fn distinct(labels: &[usize]) -> usize {
         labels.iter().copied().collect::<HashSet<_>>().len()
+    }
+
+    /// Cosine affinity with zero diagonal: the matrix `nme_sc` sweeps `p` over.
+    fn affinity(emb: &[Vec<f32>]) -> Vec<Vec<f32>> {
+        let n = emb.len();
+        let mut aff = vec![vec![0.0f32; n]; n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let s = cosine_similarity(&emb[i], &emb[j]);
+                aff[i][j] = s;
+                aff[j][i] = s;
+            }
+        }
+        aff
+    }
+
+    /// The speaker count and the NME objective (p/n)/max_eigengap at one fixed `p`.
+    /// `nme_sc` minimises that objective over its sweep range.
+    fn nme_at(emb: &[Vec<f32>], p: usize, kmax: usize) -> (usize, f32) {
+        use nalgebra::{DMatrix, SymmetricEigen};
+        let n = emb.len();
+        let lap = pruned_normalized_laplacian(&affinity(emb), p);
+        let m = DMatrix::<f32>::from_fn(n, n, |i, j| lap[i][j]);
+        let mut ev: Vec<f32> = SymmetricEigen::new(m).eigenvalues.iter().copied().collect();
+        ev.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let (k, gap) = max_eigengap(&ev, kmax);
+        (k, (p as f32 / n as f32) / gap.max(1e-6))
+    }
+
+    /// `n` deterministic unit vectors scattered around one centroid, the way a speaker
+    /// embedder scatters one person's segments: dense, high-dimensional and noisy rather
+    /// than the collinear axis-aligned points `cluster_emb` produces. xorshift64*, so no
+    /// `rand` crate and no clock — a seed always yields the same corpus. At
+    /// `spread = 0.55` the measured within-speaker cosine is 0.77 (minimum 0.69).
+    fn one_speaker(seed: u64, n: usize, dim: usize, spread: f32) -> Vec<Vec<f32>> {
+        let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut noise = move |dim: usize| -> Vec<f32> {
+            let mut v = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                // three uniforms summed: a cheap, deterministic bell shape
+                let mut acc = 0.0f32;
+                for _ in 0..3 {
+                    s ^= s >> 12;
+                    s ^= s << 25;
+                    s ^= s >> 27;
+                    acc += (s.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 40) as f32 / 8_388_608.0 - 1.0;
+                }
+                v.push(acc);
+            }
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            for x in v.iter_mut() {
+                *x /= norm;
+            }
+            v
+        };
+        let centroid = noise(dim);
+        (0..n)
+            .map(|_| {
+                let z = noise(dim);
+                let mut v: Vec<f32> = centroid
+                    .iter()
+                    .zip(&z)
+                    .map(|(&c, &q)| c + spread * q)
+                    .collect();
+                let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+                for x in v.iter_mut() {
+                    *x /= norm;
+                }
+                v
+            })
+            .collect()
+    }
+
+    /// Pins the degenerate-p failure mode the sweep floor exists to prevent. At p = 1
+    /// each speaker's pruned graph is a path, and the path's *internal* spectral gap
+    /// beats the inter-speaker one, so the eigengap describes the neighbour graph
+    /// rather than the speakers. The NME ratio actively prefers that p, so only the
+    /// lower bound of the sweep keeps it out: drop the floor and this fixture
+    /// over-splits again.
+    #[test]
+    fn nme_sc_does_not_select_degenerate_p() {
+        let emb = cluster_emb(&[0, 1], 5, 6);
+        let (k_deg, ratio_deg) = nme_at(&emb, 1, 8);
+        let (k_ok, ratio_ok) = nme_at(&emb, 3, 8);
+        assert_ne!(k_deg, 2, "p=1 is expected to misread this fixture");
+        assert_eq!(k_ok, 2, "p=3 is expected to read it correctly");
+        assert!(
+            ratio_deg < ratio_ok,
+            "the NME ratio prefers the degenerate p ({} < {}), so the sweep must exclude it",
+            ratio_deg,
+            ratio_ok
+        );
+        assert_eq!(distinct(&nme_sc(&emb, 8)), 2, "sweep landed on a degenerate p");
+    }
+
+    /// One speaker must stay one speaker on noisy, high-dimensional embeddings at the
+    /// recording lengths a dictation app actually produces (~4 s of speech per segment,
+    /// so n = 5..30 is roughly 20 s to 2 min). Every one of these came back as 3-6
+    /// speakers before the sweep floor.
+    #[test]
+    fn nme_sc_single_speaker_realistic_no_over_split() {
+        for n in [5usize, 8, 12, 20, 30] {
+            for seed in [1u64, 2, 3, 4, 5, 6] {
+                let emb = one_speaker(seed, n, 192, 0.55);
+                let labels = nme_sc(&emb, 6);
+                assert_eq!(distinct(&labels), 1, "n={} seed={} labels={:?}", n, seed, labels);
+            }
+        }
     }
 
     #[test]
