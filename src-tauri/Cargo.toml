@@ -1,6 +1,6 @@
 [package]
 name = "Crispy"
-version = "0.7.0"
+version = "0.8.0"
 description = "Crispy"
 authors = ["you"]
 edition = "2021"
