@@ -2,5 +2,8 @@
 # Only matters when building for macOS (e.g. on Mac or when CI passes --target *-apple-darwin).
 MACOSX_DEPLOYMENT_TARGET = "13.0"
 
+# TRANSCRIBE_CMAKE_ARGS lives in the workspace-root .cargo/config.toml so it
+# applies no matter which directory cargo is invoked from.
+
 # Do not set [build] target here — it would force one triple for all platforms and break Linux/Windows.
 # Use `tauri build --target <triple>` or CI build-args when you need a specific target.

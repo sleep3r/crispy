@@ -15,9 +15,10 @@ use transcribe_rs::{
         moonshine::{MoonshineModel, MoonshineVariant, StreamingModel},
         parakeet::ParakeetModel, sense_voice::SenseVoiceModel, Quantization,
     },
-    whisper_cpp::WhisperEngine,
     SpeechModel, TranscribeOptions,
 };
+
+use super::transcribe_cpp_engine::TranscribeCppEngine;
 
 /// All engines expose the unified `SpeechModel` trait in transcribe-rs 0.3, so we
 /// keep a single boxed trait object instead of a per-engine enum.
@@ -54,6 +55,9 @@ fn pad_audio_for_engine(engine_id: &str, audio: &mut Vec<f32>) {
 pub struct TranscriptionManager {
     engine: Mutex<Option<LoadedEngine>>,
     current_model_id: Mutex<Option<String>>,
+    /// Longest audio the loaded engine accepts in one call, in 16 kHz samples.
+    /// `None` = no limit. Set at load time because `SpeechModel` cannot carry it.
+    max_chunk_samples: Mutex<Option<usize>>,
     state: Mutex<HashMap<String, TranscriptionState>>,
     cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
     model_manager: Arc<ModelManager>,
@@ -97,6 +101,7 @@ impl TranscriptionManager {
         Self {
             engine: Mutex::new(None),
             current_model_id: Mutex::new(None),
+            max_chunk_samples: Mutex::new(None),
             state: Mutex::new(HashMap::new()),
             cancel_flags: Mutex::new(HashMap::new()),
             model_manager,
@@ -105,6 +110,12 @@ impl TranscriptionManager {
 
     pub fn get_current_model(&self) -> Option<String> {
         self.current_model_id.lock().unwrap().clone()
+    }
+
+    /// Longest audio the loaded engine accepts in one call, in 16 kHz samples.
+    /// `None` when the engine imposes no practical limit.
+    pub fn max_chunk_samples(&self) -> Option<usize> {
+        *self.max_chunk_samples.lock().unwrap()
     }
 
     pub fn set_state(&self, recording_path: &str, state: TranscriptionState) {
@@ -167,13 +178,20 @@ impl TranscriptionManager {
         {
             *self.engine.lock().unwrap() = None;
             *self.current_model_id.lock().unwrap() = None;
+            *self.max_chunk_samples.lock().unwrap() = None;
         }
 
+        let mut max_chunk_samples = None;
         let loaded: LoadedEngine = match model_info.engine_type {
-            EngineType::Whisper => Box::new(
-                WhisperEngine::load(&model_path)
-                    .map_err(|e| anyhow::anyhow!("Whisper load failed: {}", e))?,
-            ),
+            EngineType::TranscribeCpp => {
+                let engine = TranscribeCppEngine::load(&model_path)
+                    .map_err(|e| anyhow::anyhow!("transcribe-cpp load failed: {}", e))?;
+                // GigaAM refuses anything over 25 s, which is shorter than the
+                // caller's default chunk. Read it here or transcription fails
+                // outright on every recording longer than one chunk.
+                max_chunk_samples = engine.max_chunk_samples();
+                Box::new(engine)
+            }
             EngineType::Parakeet => Box::new(
                 ParakeetModel::load(&model_path, &quant)
                     .map_err(|e| anyhow::anyhow!("Parakeet load failed: {}", e))?,
@@ -208,6 +226,7 @@ impl TranscriptionManager {
 
         *self.engine.lock().unwrap() = Some(loaded);
         *self.current_model_id.lock().unwrap() = Some(model_id.to_string());
+        *self.max_chunk_samples.lock().unwrap() = max_chunk_samples;
         debug!("Transcription model loaded: {}", model_id);
         Ok(())
     }
@@ -455,7 +474,7 @@ mod tests {
 
     #[test]
     fn other_engines_are_never_padded() {
-        for engine in ["whisper_cpp", "parakeet", "gigaam", "sense_voice", "canary"] {
+        for engine in ["transcribe_cpp", "parakeet", "gigaam", "sense_voice", "canary"] {
             let mut audio = vec![0.5f32; 777];
             pad_audio_for_engine(engine, &mut audio);
             assert_eq!(audio.len(), 777, "{engine} was padded");

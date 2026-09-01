@@ -305,8 +305,8 @@ jobs:
         with:
           name: ${{ inputs.asset-prefix }}-${{ inputs.target }}
           path: |
-            src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/dmg/*.dmg
-            src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
+            target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/dmg/*.dmg
+            target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
           retention-days: 30
 
       - name: Install FUSE for AppImage processing
@@ -318,8 +318,11 @@ jobs:
       - name: Remove libwayland-client.so from AppImage
         if: contains(inputs.platform, 'ubuntu')
         run: |
-          # Find the AppImage file
-          APPIMAGE_PATH=$(find src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" | head -1)
+          # The workspace root is the repo, not src-tauri (see the [workspace] table
+          # in ./Cargo.toml), so cargo writes bundles to ./target — not
+          # ./src-tauri/target. This step silently no-opped for several releases,
+          # shipping AppImages that still contained libwayland-client.so.
+          APPIMAGE_PATH=$(find target/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" | head -1)
 
           if [ -n "$APPIMAGE_PATH" ]; then
             echo "Processing AppImage: $APPIMAGE_PATH"
@@ -372,9 +375,9 @@ jobs:
         with:
           name: ${{ inputs.asset-prefix }}-${{ inputs.platform }}-${{ inputs.target }}
           path: |
-            src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/deb/*.deb
-            src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/appimage/*.AppImage
-            src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/rpm/*.rpm
+            target/${{ steps.build-profile.outputs.profile }}/bundle/deb/*.deb
+            target/${{ steps.build-profile.outputs.profile }}/bundle/appimage/*.AppImage
+            target/${{ steps.build-profile.outputs.profile }}/bundle/rpm/*.rpm
           retention-days: 30
 
       - name: Upload artifacts (Windows)
@@ -384,6 +387,6 @@ jobs:
           name: ${{ inputs.asset-prefix }}-${{ inputs.target }}
           # Default Windows builds place bundles under release/, but cross-compiles (ARM64) nest under target/<triple>/release.
           path: |
-            src-tauri/target/${{ inputs.target != '' && inputs.target != 'x86_64-pc-windows-msvc' && format('{0}/{1}', inputs.target, steps.build-profile.outputs.profile) || steps.build-profile.outputs.profile }}/bundle/msi/*.msi
-            src-tauri/target/${{ inputs.target != '' && inputs.target != 'x86_64-pc-windows-msvc' && format('{0}/{1}', inputs.target, steps.build-profile.outputs.profile) || steps.build-profile.outputs.profile }}/bundle/nsis/*.exe
+            target/${{ inputs.target != '' && inputs.target != 'x86_64-pc-windows-msvc' && format('{0}/{1}', inputs.target, steps.build-profile.outputs.profile) || steps.build-profile.outputs.profile }}/bundle/msi/*.msi
+            target/${{ inputs.target != '' && inputs.target != 'x86_64-pc-windows-msvc' && format('{0}/{1}', inputs.target, steps.build-profile.outputs.profile) || steps.build-profile.outputs.profile }}/bundle/nsis/*.exe
           retention-days: 30

@@ -22,8 +22,10 @@ ALIAS="crispy-sync"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 
-# filename <TAB> sha256. Empty sha256 = no upstream checksum published; skipped.
-# sha256 values are Handy's own, from src-tauri/src/managers/model.rs.
+# filename <TAB> sha256 <TAB> path on the upstream mirror (defaults to filename).
+# An empty sha256 means no upstream source exists; such entries are verified but
+# never downloaded or uploaded. Checksums are Handy's own — the legacy artifacts
+# from their src-tauri/src/managers/model.rs, the GGUFs from their catalog.json.
 MODELS=(
   "ggml-small.bin	1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
   "whisper-medium-q4_1.bin	79283fc1f9fe12ca3248543fbd54b73292164d8df5a16e095e2bceeaaabddf57"
@@ -41,6 +43,17 @@ MODELS=(
   "canary-180m-flash.tar.gz	6d9cfca6118b296e196eaedc1c8fa9788305a7b0f1feafdb6dc91932ab6e53f7"
   "canary-1b-v2.tar.gz	02305b2a25f9cf3e7deaffa7f94df00efa44f442cd55c101c2cb9c000f904666"
   "cohere-int8.tar.gz	ea2257d52434f3644574f187dcdcf666e302cd11b92866116ab8e14cd9c887f0"
+  # GGUF, run through transcribe-cpp. Handy serves these from a repo-path layout
+  # rather than a flat prefix, hence the third field. All are MIT / Apache-2.0 /
+  # CC-BY-4.0; do not add a `license: other` or non-commercial model here without
+  # checking the terms first.
+  "gigaam-v3-ctc-Q8_0.gguf	71e5c82890e9e243a6bd7575f129f5d1bd2c3ca3ae79aab75cfb1a6934c6a62b	handy-computer/gigaam-v3-ctc-gguf/c3c611444004820c21c3b68312a41c83c1e4813b/gigaam-v3-ctc-Q8_0.gguf"
+  "gigaam-v3-rnnt-Q8_0.gguf	130d54450be2922144b265d90d453b781fc2b5adaee52a16954b00f3686201f7	handy-computer/gigaam-v3-rnnt-gguf/8f30356b4607ae2d79353ab7dc9e5eea6dc46b48/gigaam-v3-rnnt-Q8_0.gguf"
+  "gigaam-v3-e2e-rnnt-Q8_0.gguf	78d63b47723b7f8d78c6113a6ef983b5a86e2a86f6c273e1f5cb6967b1c4467a	handy-computer/gigaam-v3-e2e-rnnt-gguf/f719d70812344f4d0fb8c11c0887b190501a7465/gigaam-v3-e2e-rnnt-Q8_0.gguf"
+  "parakeet-unified-en-0.6b-Q8_0.gguf	4b50b6dd862bf6e346929aaf4f5eaacec003bfa3f56462d6c874b41ef2f38795	handy-computer/parakeet-unified-en-0.6b-gguf/7e948f21b7bdbac698d3318db9d350f1096f3b6c/parakeet-unified-en-0.6b-Q8_0.gguf"
+  "Qwen3-ASR-0.6B-Q8_0.gguf	f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8	handy-computer/Qwen3-ASR-0.6B-gguf/e4e16599b900eb0cb36e524514756bb92eb092b7/Qwen3-ASR-0.6B-Q8_0.gguf"
+  "canary-1b-flash-Q5_K_M.gguf	7eed3cac92f255a4adbd518c58663d3fbf65984d2619189e593f2d374b05c601	handy-computer/canary-1b-flash-gguf/b427664769b93c021df108a2fa8bfb858ae236c1/canary-1b-flash-Q5_K_M.gguf"
+
   # Diarization models — not hosted by Handy, already in our bucket. Verified, never re-uploaded.
   "segmentation-3.0.onnx	"
   "wespeaker_en_voxceleb_CAM++.onnx	"
@@ -72,7 +85,7 @@ missing=(); mismatched=()
 
 echo "Checking ${#MODELS[@]} artifacts against s3://${S3_BUCKET}/models/"
 for entry in "${MODELS[@]}"; do
-    file="${entry%%	*}"; want="${entry##*	}"
+    IFS=$'\t' read -r file want _src <<< "$entry"
     if mc stat "$ALIAS/${S3_BUCKET}/models/$file" >/dev/null 2>&1; then
         printf '  ok       %s\n' "$file"
         continue
@@ -94,14 +107,15 @@ fi
 echo
 echo "Fetching ${#missing[@]} artifact(s) from $HANDY_BASE into $CACHE_DIR"
 for entry in "${missing[@]}"; do
-    file="${entry%%	*}"; want="${entry##*	}"
+    IFS=$'\t' read -r file want src <<< "$entry"
+    src="${src:-$file}"
     if [ -z "$want" ]; then
         echo "  !! $file has no upstream source and is absent from S3 — restore it manually" >&2
         exit 1
     fi
     if [ ! -s "$CACHE_DIR/$file" ]; then
         echo "  downloading $file"
-        curl -fL --retry 3 --progress-bar -o "$CACHE_DIR/$file" "$HANDY_BASE/$file"
+        curl -fL --retry 3 --progress-bar -o "$CACHE_DIR/$file" "$HANDY_BASE/$src"
     fi
     got="$(shasum -a 256 "$CACHE_DIR/$file" | awk '{print $1}')"
     if [ "$got" != "$want" ]; then
@@ -118,7 +132,7 @@ done
 echo
 echo "Uploading to s3://${S3_BUCKET}/models/"
 for entry in "${missing[@]}"; do
-    file="${entry%%	*}"
+    IFS=$'\t' read -r file _ _ <<< "$entry"
     mc cp "$CACHE_DIR/$file" "$ALIAS/${S3_BUCKET}/models/$file"
 done
 
@@ -126,7 +140,7 @@ echo
 echo "Verifying public reads"
 fail=0
 for entry in "${missing[@]}"; do
-    file="${entry%%	*}"
+    IFS=$'\t' read -r file _ _ <<< "$entry"
     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -I "$PUBLIC_BASE/$file")"
     printf '  %s  %s\n' "$code" "$PUBLIC_BASE/$file"
     [ "$code" = "200" ] || fail=1

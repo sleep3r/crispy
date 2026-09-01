@@ -16,7 +16,10 @@ use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
-    Whisper,
+    /// Any GGML/GGUF file run through transcribe-cpp. The architecture is read
+    /// from the file, so this one variant covers Whisper and every other family
+    /// transcribe-cpp supports.
+    TranscribeCpp,
     Parakeet,
     Moonshine,
     /// Moonshine V2 `.ort` bundles. A separate transcribe-rs type from `Moonshine`
@@ -87,7 +90,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.60,
                 speed_score: 0.85,
             },
@@ -106,7 +109,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.75,
                 speed_score: 0.60,
             },
@@ -125,7 +128,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.80,
                 speed_score: 0.40,
             },
@@ -144,7 +147,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.85,
                 speed_score: 0.30,
             },
@@ -167,7 +170,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.85,
                 speed_score: 0.25,
             },
@@ -306,8 +309,9 @@ impl ModelManager {
             "gigaam-v3-e2e-ctc".to_string(),
             ModelInfo {
                 id: "gigaam-v3-e2e-ctc".to_string(),
-                name: "GigaAM v3".to_string(),
-                description: "Russian speech recognition. Fast and accurate.".to_string(),
+                name: "GigaAM v3 E2E CTC".to_string(),
+                description: "Russian. Fast and accurate, with punctuation and casing."
+                    .to_string(),
                 filename: "giga-am-v3-int8".to_string(),
                 url: Some("https://s3.crispy.fyi/models/giga-am-v3-int8.tar.gz".to_string()),
                 size_mb: 151,
@@ -399,6 +403,135 @@ impl ModelManager {
             },
         );
 
+        // --- GGUF models, run through transcribe-cpp ---
+        // Single files, so no extraction: they download exactly like the ggml .bin
+        // models. accuracy_score/speed_score stay on Crispy's own relative scale —
+        // Handy's catalog numbers are benchmark scores on a different scale (their
+        // multilingual benchmark rates the Russian-only GigaAM far below our
+        // ranking of it), so only the within-family ordering is taken from there.
+
+        // GigaAM v3, all four decoder heads. The ONNX build above covers e2e-ctc;
+        // these add the variants transcribe-rs cannot run (its GigaAM engine is
+        // CTC-only, so RNN-T needs transcribe-cpp).
+        available_models.insert(
+            "gigaam-v3-e2e-rnnt".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-e2e-rnnt".to_string(),
+                name: "GigaAM v3 E2E RNN-T".to_string(),
+                description: "Russian. Most accurate, with punctuation and casing.".to_string(),
+                filename: "gigaam-v3-e2e-rnnt-Q8_0.gguf".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/gigaam-v3-e2e-rnnt-Q8_0.gguf".to_string(),
+                ),
+                size_mb: 261,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.86,
+                speed_score: 0.72,
+            },
+        );
+
+        available_models.insert(
+            "gigaam-v3-rnnt".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-rnnt".to_string(),
+                name: "GigaAM v3 RNN-T".to_string(),
+                description: "Russian. Lowercase output, no punctuation.".to_string(),
+                filename: "gigaam-v3-rnnt-Q8_0.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/gigaam-v3-rnnt-Q8_0.gguf".to_string()),
+                size_mb: 260,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.74,
+                speed_score: 0.73,
+            },
+        );
+
+        available_models.insert(
+            "gigaam-v3-ctc".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-ctc".to_string(),
+                name: "GigaAM v3 CTC".to_string(),
+                description: "Russian. Fastest, but lowercase and unpunctuated.".to_string(),
+                filename: "gigaam-v3-ctc-Q8_0.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/gigaam-v3-ctc-Q8_0.gguf".to_string()),
+                size_mb: 259,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.73,
+                speed_score: 0.75,
+            },
+        );
+
+        available_models.insert(
+            "parakeet-unified-en".to_string(),
+            ModelInfo {
+                id: "parakeet-unified-en".to_string(),
+                name: "Parakeet Unified EN".to_string(),
+                description: "English only. Most accurate for English.".to_string(),
+                filename: "parakeet-unified-en-0.6b-Q8_0.gguf".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/parakeet-unified-en-0.6b-Q8_0.gguf".to_string(),
+                ),
+                size_mb: 697,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.87,
+                speed_score: 0.80,
+            },
+        );
+
+        available_models.insert(
+            "qwen3-asr-0.6b".to_string(),
+            ModelInfo {
+                id: "qwen3-asr-0.6b".to_string(),
+                name: "Qwen3-ASR 0.6B".to_string(),
+                description: "Accurate multilingual. 30 languages.".to_string(),
+                filename: "Qwen3-ASR-0.6B-Q8_0.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/Qwen3-ASR-0.6B-Q8_0.gguf".to_string()),
+                size_mb: 811,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.86,
+                speed_score: 0.60,
+            },
+        );
+
+        available_models.insert(
+            "canary-1b-flash".to_string(),
+            ModelInfo {
+                id: "canary-1b-flash".to_string(),
+                name: "Canary 1B Flash".to_string(),
+                description: "English, German, Spanish, French. Supports translation."
+                    .to_string(),
+                filename: "canary-1b-flash-Q5_K_M.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/canary-1b-flash-Q5_K_M.gguf".to_string()),
+                size_mb: 734,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.87,
+                speed_score: 0.78,
+            },
+        );
+
         // Diarization models (pyannote-rs)
         available_models.insert(
             "diarize-segmentation".to_string(),
@@ -413,7 +546,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper, // placeholder, not used for inference
+                engine_type: EngineType::TranscribeCpp, // placeholder, not used for inference
                 accuracy_score: 0.0,
                 speed_score: 0.0,
             },
@@ -432,7 +565,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper, // placeholder, not used for inference
+                engine_type: EngineType::TranscribeCpp, // placeholder, not used for inference
                 accuracy_score: 0.0,
                 speed_score: 0.0,
             },
