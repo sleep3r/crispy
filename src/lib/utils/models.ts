@@ -7,14 +7,32 @@ export interface TranscriptionModelInfo {
   is_downloading: boolean;
 }
 
+// Grouped by engine family, fastest-first within a family. Anything absent falls
+// to the alphabetical tail, so every shipped model is listed here on purpose —
+// otherwise half the list sorts by display name and the ordering looks arbitrary.
 export const MODEL_ORDER = [
   "parakeet-tdt-0.6b-v3",
   "parakeet-tdt-0.6b-v2",
   "moonshine-base",
+  "moonshine-tiny-streaming-en",
+  "moonshine-small-streaming-en",
+  "moonshine-medium-streaming-en",
+  "gigaam-v3-e2e-ctc",
+  "gigaam-v3-e2e-rnnt",
+  "gigaam-v3-rnnt",
+  "gigaam-v3-ctc",
+  "parakeet-unified-en",
+  "qwen3-asr-0.6b",
+  "canary-1b-flash",
+  "sense-voice-int8",
+  "canary-180m-flash",
+  "canary-1b-v2",
+  "cohere-int8",
   "small",
   "medium",
   "turbo",
   "large",
+  "breeze-asr",
 ];
 
 export const sortModels = (list: TranscriptionModelInfo[]) => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sortModels, type TranscriptionModelInfo } from "./models";
+import { MODEL_ORDER, sortModels, type TranscriptionModelInfo } from "./models";
 
 const makeModel = (
   id: string,
@@ -71,24 +71,38 @@ describe("sortModels", () => {
   });
 
   it("preserves full model order when all known models present", () => {
-    const models = [
-      makeModel("large"),
-      makeModel("turbo"),
-      makeModel("medium"),
-      makeModel("small"),
-      makeModel("moonshine-base"),
-      makeModel("parakeet-tdt-0.6b-v2"),
-      makeModel("parakeet-tdt-0.6b-v3"),
-    ];
-    const sorted = sortModels(models);
-    expect(sorted.map((m) => m.id)).toEqual([
+    const shuffled = [...MODEL_ORDER].reverse().map((id) => makeModel(id));
+    const sorted = sortModels(shuffled);
+    expect(sorted.map((m) => m.id)).toEqual(MODEL_ORDER);
+  });
+
+  it("orders every shipped model explicitly", () => {
+    // A model missing from MODEL_ORDER silently drops to the alphabetical tail,
+    // which reads as a UI bug rather than an omission. Keep this list in sync
+    // with the registry in src-tauri/src/managers/model.rs.
+    expect(MODEL_ORDER).toEqual([
       "parakeet-tdt-0.6b-v3",
       "parakeet-tdt-0.6b-v2",
       "moonshine-base",
+      "moonshine-tiny-streaming-en",
+      "moonshine-small-streaming-en",
+      "moonshine-medium-streaming-en",
+      "gigaam-v3-e2e-ctc",
+      "gigaam-v3-e2e-rnnt",
+      "gigaam-v3-rnnt",
+      "gigaam-v3-ctc",
+      "parakeet-unified-en",
+      "qwen3-asr-0.6b",
+      "canary-1b-flash",
+      "sense-voice-int8",
+      "canary-180m-flash",
+      "canary-1b-v2",
+      "cohere-int8",
       "small",
       "medium",
       "turbo",
       "large",
+      "breeze-asr",
     ]);
   });
 });

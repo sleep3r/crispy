@@ -56,4 +56,11 @@ final_gpt_request.txt
 # Debug folder
 debug/
 
-scripts/
+# Scratch scripts stay local; the model-mirroring and release tooling is tracked,
+# so a fresh clone can actually reproduce the S3 bucket.
+scripts/*
+!scripts/sync_models.sh
+!scripts/generate_updater_key.sh
+!scripts/setup_ssl_cert.sh
+!scripts/MODELS.md
+!scripts/SSL_SETUP.md

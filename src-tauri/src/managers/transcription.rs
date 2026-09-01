@@ -12,20 +12,52 @@ use tauri::AppHandle;
 use transcribe_rs::{
     onnx::{
         canary::CanaryModel, cohere::CohereModel, gigaam::GigaAMModel,
-        moonshine::{MoonshineModel, MoonshineVariant},
+        moonshine::{MoonshineModel, MoonshineVariant, StreamingModel},
         parakeet::ParakeetModel, sense_voice::SenseVoiceModel, Quantization,
     },
-    whisper_cpp::WhisperEngine,
     SpeechModel, TranscribeOptions,
 };
+
+use super::transcribe_cpp_engine::TranscribeCppEngine;
 
 /// All engines expose the unified `SpeechModel` trait in transcribe-rs 0.3, so we
 /// keep a single boxed trait object instead of a per-engine enum.
 type LoadedEngine = Box<dyn SpeechModel>;
 
+/// Zero-pad `audio` up to a length the loaded engine's front-end will accept.
+///
+/// Both Moonshine engines in transcribe-rs 0.3.11 reject certain input lengths
+/// outright instead of padding internally:
+///
+/// * `moonshine_streaming` feeds `samples.chunks(1280)` and its first convolution
+///   aborts on a final chunk under 80 samples, so any recording whose length mod
+///   1280 falls in `1..=79` fails with "Invalid input shape".
+/// * `moonshine` (batch) has the same shape at a 1600-sample floor, i.e. clips
+///   shorter than 100 ms.
+///
+/// Both are upstream bugs. Trailing silence is inaudible to the model and leaves
+/// output on already-valid input unchanged, so padding is the safe fix. Without it
+/// a fully transcribed recording is discarded by the `?` in the caller.
+fn pad_audio_for_engine(engine_id: &str, audio: &mut Vec<f32>) {
+    let target = match engine_id {
+        "moonshine_streaming" => {
+            const CHUNK: usize = 1280;
+            audio.len().div_ceil(CHUNK) * CHUNK
+        }
+        "moonshine" => 1600,
+        _ => return,
+    };
+    if audio.len() < target {
+        audio.resize(target, 0.0);
+    }
+}
+
 pub struct TranscriptionManager {
     engine: Mutex<Option<LoadedEngine>>,
     current_model_id: Mutex<Option<String>>,
+    /// Longest audio the loaded engine accepts in one call, in 16 kHz samples.
+    /// `None` = no limit. Set at load time because `SpeechModel` cannot carry it.
+    max_chunk_samples: Mutex<Option<usize>>,
     state: Mutex<HashMap<String, TranscriptionState>>,
     cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
     model_manager: Arc<ModelManager>,
@@ -69,6 +101,7 @@ impl TranscriptionManager {
         Self {
             engine: Mutex::new(None),
             current_model_id: Mutex::new(None),
+            max_chunk_samples: Mutex::new(None),
             state: Mutex::new(HashMap::new()),
             cancel_flags: Mutex::new(HashMap::new()),
             model_manager,
@@ -77,6 +110,12 @@ impl TranscriptionManager {
 
     pub fn get_current_model(&self) -> Option<String> {
         self.current_model_id.lock().unwrap().clone()
+    }
+
+    /// Longest audio the loaded engine accepts in one call, in 16 kHz samples.
+    /// `None` when the engine imposes no practical limit.
+    pub fn max_chunk_samples(&self) -> Option<usize> {
+        *self.max_chunk_samples.lock().unwrap()
     }
 
     pub fn set_state(&self, recording_path: &str, state: TranscriptionState) {
@@ -134,11 +173,25 @@ impl TranscriptionManager {
             Quantization::FP32
         };
 
+        // Drop the outgoing engine before building the new one; otherwise a
+        // large -> breeze-asr switch transiently holds both (~2.1 GB resident).
+        {
+            *self.engine.lock().unwrap() = None;
+            *self.current_model_id.lock().unwrap() = None;
+            *self.max_chunk_samples.lock().unwrap() = None;
+        }
+
+        let mut max_chunk_samples = None;
         let loaded: LoadedEngine = match model_info.engine_type {
-            EngineType::Whisper => Box::new(
-                WhisperEngine::load(&model_path)
-                    .map_err(|e| anyhow::anyhow!("Whisper load failed: {}", e))?,
-            ),
+            EngineType::TranscribeCpp => {
+                let engine = TranscribeCppEngine::load(&model_path)
+                    .map_err(|e| anyhow::anyhow!("transcribe-cpp load failed: {}", e))?;
+                // GigaAM refuses anything over 25 s, which is shorter than the
+                // caller's default chunk. Read it here or transcription fails
+                // outright on every recording longer than one chunk.
+                max_chunk_samples = engine.max_chunk_samples();
+                Box::new(engine)
+            }
             EngineType::Parakeet => Box::new(
                 ParakeetModel::load(&model_path, &quant)
                     .map_err(|e| anyhow::anyhow!("Parakeet load failed: {}", e))?,
@@ -146,6 +199,12 @@ impl TranscriptionManager {
             EngineType::Moonshine => Box::new(
                 MoonshineModel::load(&model_path, MoonshineVariant::Base, &quant)
                     .map_err(|e| anyhow::anyhow!("Moonshine load failed: {}", e))?,
+            ),
+            // 0 threads = let ORT pick. The bundles ship plainly-named `.ort`
+            // files, so the quant selector must stay at FP32.
+            EngineType::MoonshineStreaming => Box::new(
+                StreamingModel::load(&model_path, 0, &Quantization::FP32)
+                    .map_err(|e| anyhow::anyhow!("Moonshine streaming load failed: {}", e))?,
             ),
             EngineType::GigaAM => Box::new(
                 GigaAMModel::load(&model_path, &quant)
@@ -167,11 +226,12 @@ impl TranscriptionManager {
 
         *self.engine.lock().unwrap() = Some(loaded);
         *self.current_model_id.lock().unwrap() = Some(model_id.to_string());
+        *self.max_chunk_samples.lock().unwrap() = max_chunk_samples;
         debug!("Transcription model loaded: {}", model_id);
         Ok(())
     }
 
-    pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
+    pub fn transcribe(&self, mut audio: Vec<f32>) -> Result<String> {
         if audio.is_empty() {
             return Ok(String::new());
         }
@@ -179,6 +239,8 @@ impl TranscriptionManager {
         let engine = engine_guard.as_mut().ok_or_else(|| {
             anyhow::anyhow!("Model not loaded. Select and load a model first.")
         })?;
+
+        pad_audio_for_engine(engine.capabilities().engine_id, &mut audio);
 
         let result = engine
             .transcribe(&audio, &TranscribeOptions::default())
@@ -199,7 +261,7 @@ impl TranscriptionManager {
     /// For Whisper/Moonshine: returns single segment per chunk (fallback).
     pub fn transcribe_with_timestamps(
         &self,
-        audio: Vec<f32>,
+        mut audio: Vec<f32>,
         chunk_offset_seconds: f64,
     ) -> Result<Vec<(f64, f64, String)>> {
         if audio.is_empty() {
@@ -209,6 +271,11 @@ impl TranscriptionManager {
         let engine = engine_guard.as_mut().ok_or_else(|| {
             anyhow::anyhow!("Model not loaded. Select and load a model first.")
         })?;
+
+        // Snapshot the real duration before padding, or the fallback segment below
+        // stretches by up to 80 ms and drags diarization's word alignment with it.
+        let chunk_duration = audio.len() as f64 / 16000.0;
+        pad_audio_for_engine(engine.capabilities().engine_id, &mut audio);
 
         let result = engine
             .transcribe(&audio, &TranscribeOptions::default())
@@ -239,7 +306,6 @@ impl TranscriptionManager {
         }
 
         // Fallback: return whole text as single segment
-        let chunk_duration = audio.len() as f64 / 16000.0;
         info!("Transcription fallback: single segment, {} chars", text.len());
         Ok(vec![(
             chunk_offset_seconds,
@@ -358,4 +424,60 @@ pub fn load_transcription_chat_history(
     let messages: Vec<ChatHistoryMessage> =
         serde_json::from_str(&json).map_err(|e| anyhow::anyhow!("chat history: {}", e))?;
     Ok(messages)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pad_audio_for_engine;
+
+    #[test]
+    fn streaming_pads_to_a_whole_number_of_chunks() {
+        // transcribe-rs feeds this engine `samples.chunks(1280)` and its first
+        // convolution rejects a final chunk under 80 samples, so every length
+        // must come out a clean multiple of 1280.
+        for len in [1usize, 2, 79, 80, 1281, 1359, 1360, 16000, 47999] {
+            let mut audio = vec![0.5f32; len];
+            pad_audio_for_engine("moonshine_streaming", &mut audio);
+            assert_eq!(audio.len() % 1280, 0, "len {len} left a partial chunk");
+            assert!(audio.len() >= len);
+            assert!(audio.len() - len < 1280, "len {len} over-padded");
+        }
+    }
+
+    #[test]
+    fn streaming_leaves_aligned_audio_untouched() {
+        for len in [1280usize, 2560, 1280 * 63] {
+            let mut audio = vec![0.5f32; len];
+            pad_audio_for_engine("moonshine_streaming", &mut audio);
+            assert_eq!(audio.len(), len);
+        }
+    }
+
+    #[test]
+    fn batch_moonshine_pads_up_to_the_floor() {
+        let mut audio = vec![0.5f32; 800];
+        pad_audio_for_engine("moonshine", &mut audio);
+        assert_eq!(audio.len(), 1600);
+
+        let mut audio = vec![0.5f32; 4000];
+        pad_audio_for_engine("moonshine", &mut audio);
+        assert_eq!(audio.len(), 4000);
+    }
+
+    #[test]
+    fn padding_is_silent_and_preserves_the_original_samples() {
+        let mut audio = vec![0.5f32; 100];
+        pad_audio_for_engine("moonshine_streaming", &mut audio);
+        assert!(audio[..100].iter().all(|s| *s == 0.5));
+        assert!(audio[100..].iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn other_engines_are_never_padded() {
+        for engine in ["transcribe_cpp", "parakeet", "gigaam", "sense_voice", "canary"] {
+            let mut audio = vec![0.5f32; 777];
+            pad_audio_for_engine(engine, &mut audio);
+            assert_eq!(audio.len(), 777, "{engine} was padded");
+        }
+    }
 }

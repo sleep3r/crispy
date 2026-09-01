@@ -173,7 +173,14 @@ fn run_transcription(
     const TARGET_SAMPLE_RATE: usize = 16000;
     const RESAMPLER_CHUNK: usize = 1024;
     const TRANSCRIBE_CHUNK_SECONDS: usize = 30;
-    let transcribe_chunk_samples = TRANSCRIBE_CHUNK_SECONDS * TARGET_SAMPLE_RATE;
+    // Some engines cap how much audio they accept per call — GigaAM refuses
+    // anything over 25 s, which is under our default chunk. Shrink to whatever
+    // the loaded model allows, or every long recording fails on the first chunk.
+    let transcribe_chunk_samples = tm
+        .max_chunk_samples()
+        .map_or(TRANSCRIBE_CHUNK_SECONDS * TARGET_SAMPLE_RATE, |limit| {
+            limit.min(TRANSCRIBE_CHUNK_SECONDS * TARGET_SAMPLE_RATE)
+        });
 
     let mut reader = WavReader::open(Path::new(recording_path))?;
     let spec = reader.spec();

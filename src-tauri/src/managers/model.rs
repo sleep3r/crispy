@@ -16,9 +16,15 @@ use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
-    Whisper,
+    /// Any GGML/GGUF file run through transcribe-cpp. The architecture is read
+    /// from the file, so this one variant covers Whisper and every other family
+    /// transcribe-cpp supports.
+    TranscribeCpp,
     Parakeet,
     Moonshine,
+    /// Moonshine V2 `.ort` bundles. A separate transcribe-rs type from `Moonshine`
+    /// (`StreamingModel`, not `MoonshineModel`) even though we drive it one-shot.
+    MoonshineStreaming,
     GigaAM,
     SenseVoice,
     Canary,
@@ -79,12 +85,12 @@ impl ModelManager {
                 description: "Fast and fairly accurate.".to_string(),
                 filename: "ggml-small.bin".to_string(),
                 url: Some("https://s3.crispy.fyi/models/ggml-small.bin".to_string()),
-                size_mb: 487,
+                size_mb: 465,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.60,
                 speed_score: 0.85,
             },
@@ -98,12 +104,12 @@ impl ModelManager {
                 description: "Good accuracy, medium speed".to_string(),
                 filename: "whisper-medium-q4_1.bin".to_string(),
                 url: Some("https://s3.crispy.fyi/models/whisper-medium-q4_1.bin".to_string()),
-                size_mb: 492,
+                size_mb: 469,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.75,
                 speed_score: 0.60,
             },
@@ -117,12 +123,12 @@ impl ModelManager {
                 description: "Balanced accuracy and speed.".to_string(),
                 filename: "ggml-large-v3-turbo.bin".to_string(),
                 url: Some("https://s3.crispy.fyi/models/ggml-large-v3-turbo.bin".to_string()),
-                size_mb: 1600,
+                size_mb: 1549,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.80,
                 speed_score: 0.40,
             },
@@ -136,14 +142,37 @@ impl ModelManager {
                 description: "Good accuracy, but slow.".to_string(),
                 filename: "ggml-large-v3-q5_0.bin".to_string(),
                 url: Some("https://s3.crispy.fyi/models/ggml-large-v3-q5_0.bin".to_string()),
-                size_mb: 1100,
+                size_mb: 1031,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper,
+                engine_type: EngineType::TranscribeCpp,
                 accuracy_score: 0.85,
                 speed_score: 0.30,
+            },
+        );
+
+        // Breeze-ASR-25: a whisper-large-v2 fine-tune, so it loads on the stock
+        // Whisper engine with no dispatch change. Language is auto-detected —
+        // Crispy passes TranscribeOptions::default() and cannot pin `zh`.
+        available_models.insert(
+            "breeze-asr".to_string(),
+            ModelInfo {
+                id: "breeze-asr".to_string(),
+                name: "Breeze ASR".to_string(),
+                description: "Optimized for Taiwanese Mandarin. Code-switching support."
+                    .to_string(),
+                filename: "breeze-asr-q5_k.bin".to_string(),
+                url: Some("https://s3.crispy.fyi/models/breeze-asr-q5_k.bin".to_string()),
+                size_mb: 1031,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.85,
+                speed_score: 0.25,
             },
         );
 
@@ -155,7 +184,7 @@ impl ModelManager {
                 description: "English only. The best model for English speakers.".to_string(),
                 filename: "parakeet-tdt-0.6b-v2-int8".to_string(),
                 url: Some("https://s3.crispy.fyi/models/parakeet-v2-int8.tar.gz".to_string()),
-                size_mb: 473,
+                size_mb: 451,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
@@ -174,7 +203,7 @@ impl ModelManager {
                 description: "Fast and accurate".to_string(),
                 filename: "parakeet-tdt-0.6b-v3-int8".to_string(),
                 url: Some("https://s3.crispy.fyi/models/parakeet-v3-int8.tar.gz".to_string()),
-                size_mb: 478,
+                size_mb: 456,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
@@ -193,7 +222,7 @@ impl ModelManager {
                 description: "Very fast, English only. Handles accents well.".to_string(),
                 filename: "moonshine-base".to_string(),
                 url: Some("https://s3.crispy.fyi/models/moonshine-base.tar.gz".to_string()),
-                size_mb: 58,
+                size_mb: 55,
                 is_downloaded: false,
                 is_downloading: false,
                 partial_size: 0,
@@ -204,17 +233,85 @@ impl ModelManager {
             },
         );
 
+        // Moonshine V2. Ship as `.ort` bundles (frontend/encoder/adapter/cross_kv/
+        // decoder_kv + streaming_config.json + tokenizer.bin), so keep "int8" out of
+        // `filename` — the quant heuristic in transcription.rs would otherwise look
+        // for files that do not exist. Driven one-shot, exactly as Handy drives them.
+        available_models.insert(
+            "moonshine-tiny-streaming-en".to_string(),
+            ModelInfo {
+                id: "moonshine-tiny-streaming-en".to_string(),
+                name: "Moonshine V2 Tiny".to_string(),
+                description: "Ultra-fast, English only.".to_string(),
+                filename: "moonshine-tiny-streaming-en".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/moonshine-tiny-streaming-en.tar.gz".to_string(),
+                ),
+                size_mb: 31,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::MoonshineStreaming,
+                accuracy_score: 0.55,
+                speed_score: 0.95,
+            },
+        );
+
+        available_models.insert(
+            "moonshine-small-streaming-en".to_string(),
+            ModelInfo {
+                id: "moonshine-small-streaming-en".to_string(),
+                name: "Moonshine V2 Small".to_string(),
+                description: "Fast, English only. Good balance of speed and accuracy.".to_string(),
+                filename: "moonshine-small-streaming-en".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/moonshine-small-streaming-en.tar.gz".to_string(),
+                ),
+                size_mb: 100,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::MoonshineStreaming,
+                accuracy_score: 0.65,
+                speed_score: 0.90,
+            },
+        );
+
+        available_models.insert(
+            "moonshine-medium-streaming-en".to_string(),
+            ModelInfo {
+                id: "moonshine-medium-streaming-en".to_string(),
+                name: "Moonshine V2 Medium".to_string(),
+                description: "English only. High quality.".to_string(),
+                filename: "moonshine-medium-streaming-en".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/moonshine-medium-streaming-en.tar.gz".to_string(),
+                ),
+                size_mb: 192,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: true,
+                engine_type: EngineType::MoonshineStreaming,
+                accuracy_score: 0.75,
+                speed_score: 0.80,
+            },
+        );
+
         // --- Models adapted from Handy (transcribe-rs 0.3 ONNX engines) ---
-        // NOTE: URLs point at Crispy's own bucket. Mirror the tarballs there from
-        // Handy's CDN (https://blob.handy.computer/<file>) before release. The
-        // GigaAM directory MUST contain both `model.int8.onnx` and `vocab.txt`.
+        // All artifacts are mirrored into Crispy's own bucket; see scripts/sync_models.sh
+        // for the file list and checksums. The GigaAM directory MUST contain both
+        // `model.int8.onnx` and `vocab.txt`.
 
         available_models.insert(
             "gigaam-v3-e2e-ctc".to_string(),
             ModelInfo {
                 id: "gigaam-v3-e2e-ctc".to_string(),
-                name: "GigaAM v3".to_string(),
-                description: "Russian speech recognition. Fast and accurate.".to_string(),
+                name: "GigaAM v3 E2E CTC".to_string(),
+                description: "Russian. Fast and accurate, with punctuation and casing."
+                    .to_string(),
                 filename: "giga-am-v3-int8".to_string(),
                 url: Some("https://s3.crispy.fyi/models/giga-am-v3-int8.tar.gz".to_string()),
                 size_mb: 151,
@@ -306,6 +403,135 @@ impl ModelManager {
             },
         );
 
+        // --- GGUF models, run through transcribe-cpp ---
+        // Single files, so no extraction: they download exactly like the ggml .bin
+        // models. accuracy_score/speed_score stay on Crispy's own relative scale —
+        // Handy's catalog numbers are benchmark scores on a different scale (their
+        // multilingual benchmark rates the Russian-only GigaAM far below our
+        // ranking of it), so only the within-family ordering is taken from there.
+
+        // GigaAM v3, all four decoder heads. The ONNX build above covers e2e-ctc;
+        // these add the variants transcribe-rs cannot run (its GigaAM engine is
+        // CTC-only, so RNN-T needs transcribe-cpp).
+        available_models.insert(
+            "gigaam-v3-e2e-rnnt".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-e2e-rnnt".to_string(),
+                name: "GigaAM v3 E2E RNN-T".to_string(),
+                description: "Russian. Most accurate, with punctuation and casing.".to_string(),
+                filename: "gigaam-v3-e2e-rnnt-Q8_0.gguf".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/gigaam-v3-e2e-rnnt-Q8_0.gguf".to_string(),
+                ),
+                size_mb: 261,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.86,
+                speed_score: 0.72,
+            },
+        );
+
+        available_models.insert(
+            "gigaam-v3-rnnt".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-rnnt".to_string(),
+                name: "GigaAM v3 RNN-T".to_string(),
+                description: "Russian. Lowercase output, no punctuation.".to_string(),
+                filename: "gigaam-v3-rnnt-Q8_0.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/gigaam-v3-rnnt-Q8_0.gguf".to_string()),
+                size_mb: 260,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.74,
+                speed_score: 0.73,
+            },
+        );
+
+        available_models.insert(
+            "gigaam-v3-ctc".to_string(),
+            ModelInfo {
+                id: "gigaam-v3-ctc".to_string(),
+                name: "GigaAM v3 CTC".to_string(),
+                description: "Russian. Fastest, but lowercase and unpunctuated.".to_string(),
+                filename: "gigaam-v3-ctc-Q8_0.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/gigaam-v3-ctc-Q8_0.gguf".to_string()),
+                size_mb: 259,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.73,
+                speed_score: 0.75,
+            },
+        );
+
+        available_models.insert(
+            "parakeet-unified-en".to_string(),
+            ModelInfo {
+                id: "parakeet-unified-en".to_string(),
+                name: "Parakeet Unified EN".to_string(),
+                description: "English only. Most accurate for English.".to_string(),
+                filename: "parakeet-unified-en-0.6b-Q8_0.gguf".to_string(),
+                url: Some(
+                    "https://s3.crispy.fyi/models/parakeet-unified-en-0.6b-Q8_0.gguf".to_string(),
+                ),
+                size_mb: 697,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.87,
+                speed_score: 0.80,
+            },
+        );
+
+        available_models.insert(
+            "qwen3-asr-0.6b".to_string(),
+            ModelInfo {
+                id: "qwen3-asr-0.6b".to_string(),
+                name: "Qwen3-ASR 0.6B".to_string(),
+                description: "Accurate multilingual. 30 languages.".to_string(),
+                filename: "Qwen3-ASR-0.6B-Q8_0.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/Qwen3-ASR-0.6B-Q8_0.gguf".to_string()),
+                size_mb: 811,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.86,
+                speed_score: 0.60,
+            },
+        );
+
+        available_models.insert(
+            "canary-1b-flash".to_string(),
+            ModelInfo {
+                id: "canary-1b-flash".to_string(),
+                name: "Canary 1B Flash".to_string(),
+                description: "English, German, Spanish, French. Supports translation."
+                    .to_string(),
+                filename: "canary-1b-flash-Q5_K_M.gguf".to_string(),
+                url: Some("https://s3.crispy.fyi/models/canary-1b-flash-Q5_K_M.gguf".to_string()),
+                size_mb: 734,
+                is_downloaded: false,
+                is_downloading: false,
+                partial_size: 0,
+                is_directory: false,
+                engine_type: EngineType::TranscribeCpp,
+                accuracy_score: 0.87,
+                speed_score: 0.78,
+            },
+        );
+
         // Diarization models (pyannote-rs)
         available_models.insert(
             "diarize-segmentation".to_string(),
@@ -320,7 +546,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper, // placeholder, not used for inference
+                engine_type: EngineType::TranscribeCpp, // placeholder, not used for inference
                 accuracy_score: 0.0,
                 speed_score: 0.0,
             },
@@ -339,7 +565,7 @@ impl ModelManager {
                 is_downloading: false,
                 partial_size: 0,
                 is_directory: false,
-                engine_type: EngineType::Whisper, // placeholder, not used for inference
+                engine_type: EngineType::TranscribeCpp, // placeholder, not used for inference
                 accuracy_score: 0.0,
                 speed_score: 0.0,
             },

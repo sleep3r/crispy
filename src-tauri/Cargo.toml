@@ -1,6 +1,6 @@
 [package]
 name = "Crispy"
-version = "0.7.0"
+version = "0.8.0"
 description = "Crispy"
 authors = ["you"]
 edition = "2021"
@@ -27,9 +27,19 @@ futures-util = "0.3"
 flate2 = "1.0"
 tar = "0.4"
 rubato = "0.16"
-# 0.3.x unified SpeechModel API; "onnx" enables Parakeet/Moonshine/GigaAM/SenseVoice/
-# Canary/Cohere, "whisper-cpp" the CPU whisper.cpp backend. Requires ort rc.12.
-transcribe-rs = { version = "0.3.11", features = ["whisper-cpp", "onnx"] }
+# ONNX engines only: Parakeet/Moonshine/GigaAM/SenseVoice/Canary/Cohere. Requires ort rc.12.
+#
+# The "whisper-cpp" feature MUST stay off. It pulls whisper-rs-sys, which vendors
+# ggml 0.9.5, while transcribe-cpp-sys vendors 0.20.2. Their cargo `links` keys
+# differ ("whisper" vs "transcribe"), so cargo accepts both, the C++ compiles, the
+# binary links, and the app launches — but only one ggml survives, and ~46 of ~100
+# GGML_OP ordinals disagree between the two versions (GGML_OP_COL2IM_1D is inserted
+# mid-enum, shifting everything after it). The failure is silent and appears as
+# garbage transcripts. `make check-no-whisper-rs` guards this.
+transcribe-rs = { version = "0.3.11", features = ["onnx"] }
+# GGML/GGUF family (Whisper, Parakeet, GigaAM, Canary, Voxtral, Qwen3-ASR, ...) with
+# architecture auto-detected from the file. Static build: no runtime libs to ship.
+transcribe-cpp = { version = "0.2.3", default-features = false }
 log = "0.4"
 urlencoding = "2"
 async-openai = "0.28"
@@ -56,6 +66,8 @@ default = ["diarization"]
 diarization = ["dep:knf-rs", "dep:nalgebra"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Metal GPU backend, built statically so the bundle ships no extra dylibs.
+transcribe-cpp = { version = "0.2.3", default-features = false, features = ["metal"] }
 coreaudio-sys = "0.2"
 objc2 = "0.6"
 objc2-app-kit = "0.3"

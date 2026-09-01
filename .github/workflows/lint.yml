@@ -21,3 +21,46 @@ jobs:
 
       - name: Unit tests
         run: bun run test
+
+  # The Rust suite covers the diarization clustering and the audio maths, none of which
+  # the TypeScript jobs touch. Must run with default features on: `--no-default-features`
+  # drops the `diarization` feature and silently skips the NME-SC tests, which is most of
+  # the value here. That means building transcribe-cpp's vendored ggml, so keep the cache.
+  rust-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libasound2-dev cmake
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test
+
+  # transcribe-cpp and transcribe-rs's "whisper-cpp" feature each vendor their own
+  # ggml (0.20.2 vs 0.9.5) and export the same symbols. Their cargo `links` keys
+  # differ, so cargo will happily accept both: the C++ compiles, the binary links,
+  # the app launches and enumerates devices — and then ~46 of ~100 GGML_OP ordinals
+  # mean different operations at inference, because GGML_OP_COL2IM_1D is inserted
+  # mid-enum. Nothing in the compiler or linker ever complains, so this grep is the
+  # only automated defence.
+  no-duplicate-ggml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert whisper-rs-sys is absent from the lockfile
+        run: |
+          if grep -q '^name = "whisper-rs-sys"' Cargo.lock; then
+            echo "::error file=src-tauri/Cargo.toml::whisper-rs-sys is back in Cargo.lock."
+            echo "It vendors ggml 0.9.5, which silently corrupts transcribe-cpp's graph"
+            echo "dispatch. Remove the transcribe-rs \"whisper-cpp\" feature."
+            exit 1
+          fi
+          echo "ok: single ggml in the dependency graph"

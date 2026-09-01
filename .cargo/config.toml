@@ -1,0 +1,11 @@
+# Workspace-level cargo config. Kept at the repo root (rather than only in
+# src-tauri/) because cargo merges configs from the invocation directory upward:
+# this applies whether you run cargo from the workspace root or from src-tauri/.
+
+[env]
+# transcribe-cpp vendors ggml, whose CMake defaults to GGML_NATIVE=ON and compiles
+# with `-mcpu=native`. That is wrong for us twice over:
+#   1. Apple clang rejects `-mcpu=native` on arm64 outright, so the build fails.
+#   2. Where it does work it tunes the binary to the build machine's CPU, which in
+#      a shipped artifact means illegal instructions on someone else's.
+TRANSCRIBE_CMAKE_ARGS = "-DGGML_NATIVE=OFF"
